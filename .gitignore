@@ -27,6 +27,16 @@ go.work.sum
 # env file
 .env
 
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# Local tool caches
+.cache/
+
+# Local runtime data
+tmp/
+
 # Editor/IDE
 # .idea/
 # .vscode/

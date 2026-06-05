@@ -1,0 +1,271 @@
+package httpapi
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+)
+
+type response map[string]any
+
+func (a *App) health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, response{"status": "ok", "service": "model-market-backend"})
+}
+
+func (a *App) ready(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := a.DB.PingContext(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "database": err.Error()})
+		return
+	}
+	if err := a.Redis.Ping(ctx).Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "redis": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"status": "ready"})
+}
+
+func (a *App) devSummary(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	counts := map[string]int64{}
+	for _, table := range []string{"users", "organizations", "projects", "providers", "models", "model_profiles", "wallets", "conversations", "messages", "usage_events"} {
+		var count int64
+		if err := a.DB.QueryRowContext(ctx, fmt.Sprintf("select count(*) from %s", table)).Scan(&count); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		counts[table] = count
+	}
+	writeJSON(w, http.StatusOK, response{"dev_mode": a.Config.DevMode, "counts": counts})
+}
+
+func (a *App) devLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	if req.Email == "" {
+		req.Email = "admin@example.com"
+	}
+	var userID, orgID, projectID, name string
+	err := a.DB.QueryRowContext(r.Context(), `
+		select u.id, u.name, o.id, p.id
+		from users u
+		join memberships m on m.user_id = u.id
+		join organizations o on o.id = m.organization_id
+		join projects p on p.organization_id = o.id
+		where u.email = $1
+		order by p.created_at asc
+		limit 1`, req.Email).Scan(&userID, &name, &orgID, &projectID)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, response{"error": "dev_user_not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{
+		"user":            response{"id": userID, "email": req.Email, "name": name},
+		"organization_id": orgID,
+		"project_id":      projectID,
+	})
+}
+
+func (a *App) models(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, '')
+		from models m
+		join providers p on p.id = m.provider_id
+		left join model_profiles mp on mp.model_id = m.id and mp.status = 'public'
+		order by p.name, m.name`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, slug, name, provider, modality, status, profileSlug, profileName string
+		if err := rows.Scan(&id, &slug, &name, &provider, &modality, &status, &profileSlug, &profileName); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "slug": slug, "name": name, "provider": provider, "modality": modality, "status": status, "profile_slug": profileSlug, "profile_name": profileName})
+	}
+	writeJSON(w, http.StatusOK, response{"models": items})
+}
+
+func (a *App) projects(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0)
+		from projects p
+		join organizations o on o.id = p.organization_id
+		left join wallets w on w.project_id = p.id
+		order by p.created_at asc`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, name, org string
+		var paid, promo int64
+		if err := rows.Scan(&id, &name, &org, &paid, &promo); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "name": name, "organization": org, "paid_credits": paid, "promotional_credits": promo})
+	}
+	writeJSON(w, http.StatusOK, response{"projects": items})
+}
+
+func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project_id")
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select id, name, prefix, status, created_at, revoked_at
+		from api_keys
+		where project_id = $1
+		order by created_at desc`, projectID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, name, prefix, status string
+		var createdAt time.Time
+		var revokedAt sql.NullTime
+		if err := rows.Scan(&id, &name, &prefix, &status, &createdAt, &revokedAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		item := response{"id": id, "name": name, "prefix": prefix, "status": status, "created_at": createdAt}
+		if revokedAt.Valid {
+			item["revoked_at"] = revokedAt.Time
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, response{"api_keys": items})
+}
+
+func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `json:"project_id"`
+		Name      string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
+		return
+	}
+	if req.Name == "" {
+		req.Name = "Development key"
+	}
+	raw := "mk_" + randomHex(24)
+	prefix := raw[:10]
+	hash := hashAPIKey(raw)
+	var id string
+	err := a.DB.QueryRowContext(r.Context(), `
+		insert into api_keys(project_id, name, prefix, key_hash, scopes, status)
+		values($1, $2, $3, $4, array['models:read','chat:create'], 'active')
+		returning id`, req.ProjectID, req.Name, prefix, hash).Scan(&id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, response{"id": id, "api_key": raw, "prefix": prefix})
+}
+
+func (a *App) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/api-keys/")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_id"})
+		return
+	}
+	_, err := a.DB.ExecContext(r.Context(), `update api_keys set status = 'revoked', revoked_at = now() where id = $1`, id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"status": "revoked", "id": id})
+}
+
+func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	projectID, err := a.authenticateAPIKey(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, response{"error": err.Error()})
+		return
+	}
+	var req struct {
+		Model    string `json:"model"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
+		return
+	}
+	content := "Mock response from " + req.Model
+	if len(req.Messages) > 0 {
+		content = "Mock response to: " + req.Messages[len(req.Messages)-1].Content
+	}
+	var requestID string
+	err = a.DB.QueryRowContext(r.Context(), `
+		insert into inference_requests(project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
+		values($1, $2, 'mock-provider', 'succeeded', $3, $4, 1, 0, 1)
+		returning id`, projectID, req.Model, len(req.Messages), len(content)).Scan(&requestID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{
+		"id":      requestID,
+		"object":  "chat.completion",
+		"model":   req.Model,
+		"choices": []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
+		"usage":   response{"prompt_tokens": len(req.Messages), "completion_tokens": len(content), "total_tokens": len(req.Messages) + len(content)},
+	})
+}
+
+func (a *App) authenticateAPIKey(r *http.Request) (string, error) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return "", errors.New("missing_api_key")
+	}
+	hash := hashAPIKey(strings.TrimPrefix(header, "Bearer "))
+	var projectID string
+	err := a.DB.QueryRowContext(r.Context(), `select project_id from api_keys where key_hash = $1 and status = 'active'`, hash).Scan(&projectID)
+	if err != nil {
+		return "", errors.New("invalid_api_key")
+	}
+	return projectID, nil
+}
+
+func randomHex(bytesLen int) string {
+	buf := make([]byte, bytesLen)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
+}
+
+func hashAPIKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}

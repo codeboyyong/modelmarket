@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Model Market</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="mark">MM</span>
+          <div>
+            <strong>Model Market</strong>
+            <small>Phase 1 foundation</small>
+          </div>
+        </div>
+        <nav>
+          <a href="#dashboard">Dashboard</a>
+          <a href="#catalog">Catalog</a>
+          <a href="#workbench">Workbench</a>
+          <a href="#admin">Metadata</a>
+          <a href="#keys">API Keys</a>
+        </nav>
+      </aside>
+      <section class="content">
+        <header class="topbar">
+          <div>
+            <h1>Model Market Dev Console</h1>
+            <p>Local shell backed by Go, PostgreSQL, Redis, and repo-owned mock data.</p>
+          </div>
+          <button id="refresh">Refresh</button>
+        </header>
+
+        <section class="grid" id="dashboard">
+          <article>
+            <h2>System</h2>
+            <div id="summary" class="kv">Loading...</div>
+          </article>
+          <article>
+            <h2>Projects</h2>
+            <div id="projects" class="list">Loading...</div>
+          </article>
+        </section>
+
+        <section class="panel" id="catalog">
+          <h2>Model Catalog</h2>
+          <div id="models" class="cards">Loading...</div>
+        </section>
+
+        <section class="panel" id="workbench">
+          <h2>Workbench</h2>
+          <div class="workbench">
+            <label>
+              Model
+              <select id="modelSelect"></select>
+            </label>
+            <label>
+              Prompt
+              <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
+            </label>
+            <button id="sendPrompt">Send Mock Chat</button>
+            <pre id="chatResult">No response yet.</pre>
+          </div>
+        </section>
+
+        <section class="grid" id="admin">
+          <article>
+            <h2>Metadata Manager</h2>
+            <p class="muted">Phase 1 shell for models, providers, model profiles, pricing, routing, and mock metadata.</p>
+            <ul>
+              <li>Providers and models are loaded from <code>mock-data/dev_seed.json</code>.</li>
+              <li>Model profiles include default system prompts and parameters.</li>
+              <li>Publish/rollback workflows land in Phase 2.</li>
+            </ul>
+          </article>
+          <article id="keys">
+            <h2>API Keys</h2>
+            <button id="createKey">Create Dev API Key</button>
+            <div id="newKey"></div>
+            <div id="apiKeys" class="list">Load a project first.</div>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/assets/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,112 @@
+{
+  "users": [
+    {
+      "email": "admin@example.com",
+      "name": "Admin User",
+      "role": "owner"
+    },
+    {
+      "email": "developer@example.com",
+      "name": "Developer User",
+      "role": "developer"
+    }
+  ],
+  "organization": {
+    "name": "Demo Organization",
+    "slug": "demo-org"
+  },
+  "project": {
+    "name": "Demo Project",
+    "slug": "demo-project",
+    "environment": "dev"
+  },
+  "wallet": {
+    "paid_credits": 10000,
+    "promotional_credits": 5000
+  },
+  "providers": [
+    {
+      "slug": "mock-provider",
+      "name": "Mock Provider",
+      "endpoint_url": "mock://provider",
+      "metadata": {
+        "mode": "dev",
+        "supports_streaming": true
+      }
+    },
+    {
+      "slug": "openai-placeholder",
+      "name": "OpenAI Placeholder",
+      "endpoint_url": "https://api.openai.com",
+      "metadata": {
+        "credential_ref": "OPENAI_API_KEY",
+        "enabled_by_default": false
+      }
+    }
+  ],
+  "models": [
+    {
+      "provider_slug": "mock-provider",
+      "slug": "mock-chat",
+      "name": "Mock Chat",
+      "modality": "chat",
+      "context_window": 8192,
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "files": false
+      },
+      "profile": {
+        "slug": "mock-chat-default",
+        "name": "Mock Chat Default",
+        "system_prompt": "You are a helpful mocked assistant for local development.",
+        "default_parameters": {
+          "temperature": 0.2,
+          "max_tokens": 512
+        }
+      },
+      "price": {
+        "unit_type": "request",
+        "customer_price_credits": 1,
+        "provider_cost_credits": 0
+      }
+    },
+    {
+      "provider_slug": "mock-provider",
+      "slug": "mock-creative",
+      "name": "Mock Creative",
+      "modality": "image",
+      "context_window": 0,
+      "capabilities": {
+        "image_generation": true,
+        "async_jobs": true
+      },
+      "profile": {
+        "slug": "mock-creative-default",
+        "name": "Mock Creative Default",
+        "system_prompt": "Generate deterministic local development assets.",
+        "default_parameters": {
+          "size": "1024x1024"
+        }
+      },
+      "price": {
+        "unit_type": "image",
+        "customer_price_credits": 10,
+        "provider_cost_credits": 0
+      }
+    }
+  ],
+  "conversation": {
+    "title": "Seeded demo conversation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What can I do in this model market?"
+      },
+      {
+        "role": "assistant",
+        "content": "You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls."
+      }
+    ]
+  }
+}
