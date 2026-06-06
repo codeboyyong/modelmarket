@@ -3,6 +3,7 @@ module model-market/backend
 go 1.25
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/jackc/pgx/v5 v5.7.0
 	github.com/redis/go-redis/v9 v9.7.0
 )

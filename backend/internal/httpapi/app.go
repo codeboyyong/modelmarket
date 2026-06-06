@@ -1,19 +1,22 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
 
-	"github.com/redis/go-redis/v9"
-
 	"model-market/backend/internal/config"
 )
+
+type RedisPinger interface {
+	Ping(context.Context) error
+}
 
 type App struct {
 	Config config.Config
 	DB     *sql.DB
-	Redis  *redis.Client
+	Redis  RedisPinger
 	Logger *slog.Logger
 }
 

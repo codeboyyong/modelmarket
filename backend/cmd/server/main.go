@@ -26,7 +26,7 @@ func main() {
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel()}))
 
-	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	db, err := sql.Open(cfg.SQLDriverName(), cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("database_open_failed", "error", err)
 		os.Exit(1)
@@ -56,7 +56,7 @@ func main() {
 	app := &httpapi.App{
 		Config: cfg,
 		DB:     db,
-		Redis:  redisClient,
+		Redis:  redisPinger{client: redisClient},
 		Logger: logger,
 	}
 
@@ -66,7 +66,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Info("server_starting", "addr", cfg.HTTPAddr, "dev_mode", cfg.DevMode)
+	logger.Info("server_starting", "addr", cfg.HTTPAddr, "app_env", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_driver", cfg.DBDriver, "db_ssl_mode", cfg.DBSSLMode)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server_failed", "error", err)
 		os.Exit(1)
@@ -104,6 +104,14 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+}
+
+type redisPinger struct {
+	client *redis.Client
+}
+
+func (p redisPinger) Ping(ctx context.Context) error {
+	return p.client.Ping(ctx).Err()
 }
 
 func (r *statusRecorder) WriteHeader(status int) {

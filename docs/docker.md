@@ -93,6 +93,64 @@ PLATFORMS=linux/amd64,linux/arm64 scripts/docker-build-multiarch.sh
 - `OUTPUT_MODE`: `push` or `load`, default `push`.
 - `BUILDER_NAME`: Buildx builder name, default `model-market-builder`.
 
+## Database Configuration
+
+PostgreSQL is the implemented database for Phase 1.
+
+The backend reads database config from environment variables. You can set a full connection string:
+
+```sh
+APP_ENV=prod
+MM_DB_DRIVER=postgres
+MM_DATABASE_URL='postgres://user:password@db.example.com:5432/model_market?sslmode=require'
+```
+
+Or build it from individual fields:
+
+```sh
+APP_ENV=qa
+MM_DB_DRIVER=postgres
+MM_DB_HOST=db.example.com
+MM_DB_PORT=5432
+MM_DB_NAME=model_market
+MM_DB_USER=model_market
+MM_DB_PASSWORD=secret
+MM_DB_SSL_MODE=require
+```
+
+SSL defaults:
+
+- `dev`, `test`, `local`: `MM_DB_SSL_MODE=disable`
+- `qa`, `staging`, `prod`: `MM_DB_SSL_MODE=require`
+
+Set `MM_DB_SSL_MODE=verify-full` when your PostgreSQL certificate and hostname are configured for strict verification.
+
+Initialize schema manually:
+
+```sh
+scripts/init_db.sh dev
+```
+
+Populate test data manually:
+
+```sh
+scripts/populate_test_data.sh dev
+```
+
+Both scripts accept an environment name:
+
+```sh
+scripts/init_db.sh qa
+scripts/populate_test_data.sh qa
+```
+
+They load config from `.env`, `.env.<environment>`, and `deploy/env/<environment>.env` when those files exist.
+
+Schema and test data SQL:
+
+- `backend/db/init_db.sql`
+- `backend/db/populate_test_data.sql`
+
 ## Notes
 
 Multi-architecture builds usually require `OUTPUT_MODE=push` because Docker creates a manifest list in the registry. For local testing, build one platform with `OUTPUT_MODE=load`.

@@ -27,7 +27,7 @@ func (a *App) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "database": err.Error()})
 		return
 	}
-	if err := a.Redis.Ping(ctx).Err(); err != nil {
+	if err := a.Redis.Ping(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "redis": err.Error()})
 		return
 	}
@@ -174,11 +174,10 @@ func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	raw := "mk_" + randomHex(24)
 	prefix := raw[:10]
 	hash := hashAPIKey(raw)
-	var id string
-	err := a.DB.QueryRowContext(r.Context(), `
-		insert into api_keys(project_id, name, prefix, key_hash, scopes, status)
-		values($1, $2, $3, $4, array['models:read','chat:create'], 'active')
-		returning id`, req.ProjectID, req.Name, prefix, hash).Scan(&id)
+	id := "key_" + randomHex(12)
+	_, err := a.DB.ExecContext(r.Context(), `
+		insert into api_keys(id, project_id, name, prefix, key_hash, scopes, status)
+		values($1, $2, $3, $4, $5, $6, 'active')`, id, req.ProjectID, req.Name, prefix, hash, "models:read,chat:create")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -192,7 +191,7 @@ func (a *App) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_id"})
 		return
 	}
-	_, err := a.DB.ExecContext(r.Context(), `update api_keys set status = 'revoked', revoked_at = now() where id = $1`, id)
+	_, err := a.DB.ExecContext(r.Context(), `update api_keys set status = 'revoked', revoked_at = current_timestamp where id = $1`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -221,11 +220,10 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if len(req.Messages) > 0 {
 		content = "Mock response to: " + req.Messages[len(req.Messages)-1].Content
 	}
-	var requestID string
-	err = a.DB.QueryRowContext(r.Context(), `
-		insert into inference_requests(project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
-		values($1, $2, 'mock-provider', 'succeeded', $3, $4, 1, 0, 1)
-		returning id`, projectID, req.Model, len(req.Messages), len(content)).Scan(&requestID)
+	requestID := "req_" + randomHex(12)
+	_, err = a.DB.ExecContext(r.Context(), `
+		insert into inference_requests(id, project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
+		values($1, $2, $3, 'mock-provider', 'succeeded', $4, $5, 1, 0, 1)`, requestID, projectID, req.Model, len(req.Messages), len(content))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return

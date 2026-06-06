@@ -12,8 +12,8 @@ import (
 
 func RunMigrations(ctx context.Context, db *sql.DB, dir string) error {
 	if _, err := db.ExecContext(ctx, `create table if not exists schema_migrations (
-		version text primary key,
-		applied_at timestamptz not null default now()
+		version varchar(255) primary key,
+		applied_at timestamp not null default current_timestamp
 	)`); err != nil {
 		return err
 	}
