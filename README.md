@@ -8,7 +8,7 @@ The current implementation is a local developer scaffold:
 - Node.js + TypeScript frontend
 - PostgreSQL schema migrations
 - Redis connection
-- repo-owned dev seed/mock data
+- repo-owned dev test/mock data
 - Docker Compose stack
 - basic API key flow
 - mock chat completion endpoint
@@ -21,6 +21,7 @@ The product direction is documented in:
 - [implementation_plan.md](implementation_plan.md)
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
+- [docs/security.md](docs/security.md)
 
 ## Requirements
 
@@ -71,7 +72,7 @@ The app should be available at:
 - Backend health: http://localhost:8080/healthz
 - Backend readiness: http://localhost:8080/readyz
 
-The backend runs migrations and loads dev seed data automatically when `DEV_MODE=true`.
+The backend runs migrations and loads dev test data automatically when `DEV_MODE=true`.
 
 ## Environment
 
@@ -133,7 +134,7 @@ scripts/init_db.sh dev db/init_db.sql
 scripts/populate_test_data.sh dev db/populate_test_data.sql
 ```
 
-The test-data script clears seeded rows before inserting, so it can be rerun in a development database.
+The test-data script clears existing dev test rows before inserting, so it can be rerun in a development database.
 
 ## Manual Backend Run
 
@@ -254,7 +255,13 @@ Get projects:
 curl http://localhost:8080/api/v1/projects
 ```
 
-Create an API key. Replace `PROJECT_ID` with a project ID from the previous response:
+Dev test data includes this API key for local smoke tests:
+
+```text
+mk_dev_test_key
+```
+
+You can also create a new API key. Replace `PROJECT_ID` with a project ID from the previous response:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/api-keys \
@@ -262,12 +269,12 @@ curl -X POST http://localhost:8080/api/v1/api-keys \
   -d '{"project_id":"PROJECT_ID","name":"Local dev key"}'
 ```
 
-Call mock chat. Replace `API_KEY` with the key returned above:
+Call mock chat with the seeded dev key:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer API_KEY' \
+  -H 'Authorization: Bearer mk_dev_test_key' \
   -d '{
     "model": "mock-chat-default",
     "messages": [
@@ -284,7 +291,7 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 ```text
 backend/              Go backend API
 frontend/             Node.js + TypeScript frontend
-mock-data/            repo-owned dev seed data
+mock-data/            repo-owned dev test data
 scripts/              local dev/check/build helpers
 docs/                 developer documentation
 deploy/               future deployment assets
@@ -316,7 +323,7 @@ Phase 1 is implemented:
 
 - runnable skeleton
 - migrations
-- dev seed data
+- dev test data
 - frontend shell
 - backend health/readiness
 - API key basics

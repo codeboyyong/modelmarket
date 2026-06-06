@@ -123,9 +123,14 @@ create table if not exists price_rules (
 	id varchar(64) primary key,
 	model_id varchar(64) references models(id),
 	model_profile_id varchar(64) references model_profiles(id),
-	unit_type varchar(64) not null,
-	customer_price_credits integer not null,
-	provider_cost_credits integer not null default 0,
+	input_token_price numeric(18,8) not null default 0,
+	input_token_price_unit varchar(64) not null default '1k_tokens',
+	output_token_price numeric(18,8) not null default 0,
+	output_token_price_unit varchar(64) not null default '1k_tokens',
+	provider_input_token_cost numeric(18,8) not null default 0,
+	provider_input_token_cost_unit varchar(64) not null default '1k_tokens',
+	provider_output_token_cost numeric(18,8) not null default 0,
+	provider_output_token_cost_unit varchar(64) not null default '1k_tokens',
 	currency varchar(16) not null default 'CREDIT',
 	effective_at timestamp not null default current_timestamp,
 	metadata text not null default '{}'
@@ -320,6 +325,45 @@ create table if not exists payments (
 	created_at timestamp not null default current_timestamp
 );
 
+create table if not exists payment_methods (
+	id varchar(64) primary key,
+	organization_id varchar(64) references organizations(id),
+	project_id varchar(64) references projects(id),
+	user_id varchar(64) references users(id),
+	provider varchar(64) not null,
+	provider_payment_method_id varchar(255),
+	method_type varchar(64) not null,
+	display_name varchar(255),
+	last_four varchar(16),
+	exp_month integer,
+	exp_year integer,
+	billing_email varchar(255),
+	status varchar(32) not null default 'active',
+	is_default integer not null default 0,
+	metadata text not null default '{}',
+	created_at timestamp not null default current_timestamp,
+	updated_at timestamp not null default current_timestamp
+);
+
+create table if not exists payment_transactions (
+	id varchar(64) primary key,
+	payment_id varchar(64) references payments(id),
+	payment_method_id varchar(64) references payment_methods(id),
+	project_id varchar(64) not null references projects(id),
+	transaction_type varchar(64) not null,
+	provider varchar(64) not null,
+	provider_transaction_id varchar(255),
+	status varchar(32) not null,
+	amount_cents bigint not null default 0,
+	currency varchar(16) not null,
+	credits_delta bigint not null default 0,
+	idempotency_key varchar(255) not null unique,
+	error_code varchar(255),
+	error_message text,
+	metadata text not null default '{}',
+	created_at timestamp not null default current_timestamp
+);
+
 create table if not exists invoices (
 	id varchar(64) primary key,
 	project_id varchar(64) not null references projects(id),
@@ -422,6 +466,21 @@ create table if not exists provider_health_events (
 	created_at timestamp not null default current_timestamp
 );
 
+create table if not exists user_interaction_history (
+	id varchar(64) primary key,
+	user_id varchar(64) references users(id),
+	organization_id varchar(64) references organizations(id),
+	project_id varchar(64) references projects(id),
+	session_id varchar(64),
+	interaction_type varchar(255) not null,
+	surface varchar(255) not null,
+	target_type varchar(255),
+	target_id varchar(64),
+	event_name varchar(255) not null,
+	metadata text not null default '{}',
+	created_at timestamp not null default current_timestamp
+);
+
 create table if not exists audit_logs (
 	id varchar(64) primary key,
 	actor_user_id varchar(64) references users(id),
@@ -443,3 +502,7 @@ create index if not exists idx_workspace_assets_project on workspace_assets(proj
 create index if not exists idx_async_jobs_project on async_jobs(project_id, created_at);
 create index if not exists idx_provider_attempts_request on provider_attempts(inference_request_id);
 create index if not exists idx_audit_logs_created on audit_logs(created_at);
+create index if not exists idx_payment_methods_project on payment_methods(project_id, status);
+create index if not exists idx_payment_transactions_project on payment_transactions(project_id, created_at);
+create index if not exists idx_user_interaction_project on user_interaction_history(project_id, created_at);
+create index if not exists idx_user_interaction_user on user_interaction_history(user_id, created_at);

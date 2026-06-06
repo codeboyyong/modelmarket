@@ -50,9 +50,14 @@ type Data struct {
 			DefaultParameters map[string]any `json:"default_parameters"`
 		} `json:"profile"`
 		Price struct {
-			UnitType             string `json:"unit_type"`
-			CustomerPriceCredits int    `json:"customer_price_credits"`
-			ProviderCostCredits  int    `json:"provider_cost_credits"`
+			InputTokenPrice             float64 `json:"input_token_price"`
+			InputTokenPriceUnit         string  `json:"input_token_price_unit"`
+			OutputTokenPrice            float64 `json:"output_token_price"`
+			OutputTokenPriceUnit        string  `json:"output_token_price_unit"`
+			ProviderInputTokenCost      float64 `json:"provider_input_token_cost"`
+			ProviderInputTokenCostUnit  string  `json:"provider_input_token_cost_unit"`
+			ProviderOutputTokenCost     float64 `json:"provider_output_token_cost"`
+			ProviderOutputTokenCostUnit string  `json:"provider_output_token_cost_unit"`
 		} `json:"price"`
 	} `json:"models"`
 	Conversation struct {
@@ -65,7 +70,7 @@ type Data struct {
 }
 
 func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) error {
-	raw, err := os.ReadFile(filepath.Join(dir, "dev_seed.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "dev_test_data.json"))
 	if err != nil {
 		return err
 	}
@@ -94,6 +99,9 @@ func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) erro
 	if _, err := tx.ExecContext(ctx, `insert into projects(id, organization_id, name, slug, environment) values($1, $2, $3, $4, $5)`, projectID, orgID, data.Project.Name, data.Project.Slug, data.Project.Environment); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `insert into api_keys(id, project_id, name, prefix, key_hash, scopes, status) values($1, $2, $3, $4, $5, $6, 'active')`, "api_key_dev_test", projectID, "Dev test API key", "mk_dev_tes", "8f10d494a55d6262aded7008470955c7b6175fa6afc719e837f3634c0e4d19aa", "models:read,chat:create"); err != nil {
+		return err
+	}
 
 	for _, user := range data.Users {
 		userID := "user_" + stableToken(user.Email)
@@ -108,7 +116,7 @@ func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) erro
 	if _, err := tx.ExecContext(ctx, `insert into wallets(id, project_id, paid_credits, promotional_credits) values($1, $2, $3, $4)`, walletID, projectID, data.Wallet.PaidCredits, data.Wallet.PromotionalCredits); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key) values($1, $2, 'grant', $3, 'promotional', 'posted', 'dev seed credits', 'dev-seed-credit-grant')`, "ledger_dev_seed_credit_grant", walletID, data.Wallet.PromotionalCredits); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key) values($1, $2, 'grant', $3, 'promotional', 'posted', 'dev test credits', 'dev-test-credit-grant')`, "ledger_dev_test_credit_grant", walletID, data.Wallet.PromotionalCredits); err != nil {
 		return err
 	}
 
@@ -134,7 +142,7 @@ func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) erro
 		if _, err := tx.ExecContext(ctx, `insert into model_profiles(id, model_id, slug, name, system_prompt, default_parameters) values($1, $2, $3, $4, $5, $6)`, profileID, modelID, model.Profile.Slug, model.Profile.Name, model.Profile.SystemPrompt, string(params)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `insert into price_rules(id, model_id, model_profile_id, unit_type, customer_price_credits, provider_cost_credits) values($1, $2, $3, $4, $5, $6)`, "price_"+model.Profile.Slug+"_"+model.Price.UnitType, modelID, profileID, model.Price.UnitType, model.Price.CustomerPriceCredits, model.Price.ProviderCostCredits); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into price_rules(id, model_id, model_profile_id, input_token_price, input_token_price_unit, output_token_price, output_token_price_unit, provider_input_token_cost, provider_input_token_cost_unit, provider_output_token_cost, provider_output_token_cost_unit) values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, "price_"+model.Profile.Slug, modelID, profileID, model.Price.InputTokenPrice, model.Price.InputTokenPriceUnit, model.Price.OutputTokenPrice, model.Price.OutputTokenPriceUnit, model.Price.ProviderInputTokenCost, model.Price.ProviderInputTokenCostUnit, model.Price.ProviderOutputTokenCost, model.Price.ProviderOutputTokenCostUnit); err != nil {
 			return err
 		}
 	}
@@ -151,7 +159,7 @@ func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) erro
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `insert into usage_events(id, project_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) values($1, $2, null, $3, $4, $5, $6, $7, $8)`, "usage_seed_1", projectID, "mock-chat-default", "mock-provider", "seeded_demo_usage", 1, 0, `{"source":"dev_seed.json"}`); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into usage_events(id, project_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) values($1, $2, null, $3, $4, $5, $6, $7, $8)`, "usage_dev_test_1", projectID, "mock-chat-default", "mock-provider", "dev_test_demo_usage", 1, 0, `{"source":"dev_test_data.json"}`); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `insert into routing_policies(id, project_id, name, status, policy) values($1, $2, $3, 'active', $4)`, "routing_policy_demo_default", projectID, "Demo default routing", `{"mode":"fixed","provider":"mock-provider"}`); err != nil {
@@ -160,21 +168,39 @@ func Load(ctx context.Context, db *sql.DB, dir string, logger *slog.Logger) erro
 	if _, err := tx.ExecContext(ctx, `insert into budget_policies(id, project_id, name, monthly_credit_limit, status, metadata) values($1, $2, $3, $4, 'active', '{}')`, "budget_policy_demo_monthly", projectID, "Demo monthly budget", 100000); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into coupons(id, code, status, credit_amount, metadata) values($1, $2, 'active', $3, $4)`, "coupon_demo_credits", "DEV-CREDITS", 1000, `{"source":"dev_seed.json"}`); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into coupons(id, code, status, credit_amount, metadata) values($1, $2, 'active', $3, $4)`, "coupon_demo_credits", "DEV-CREDITS", 1000, `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into payment_methods(id, organization_id, project_id, user_id, provider, provider_payment_method_id, method_type, display_name, last_four, exp_month, exp_year, billing_email, status, is_default, metadata) values($1, $2, $3, $4, $5, $6, 'card', $7, $8, $9, $10, $11, 'active', 1, $12)`, "payment_method_demo_card", orgID, projectID, "user_admin_example_com", "mock-payment", "pm_mock_demo_card", "Mock Visa ending 4242", "4242", 12, 2030, "admin@example.com", `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into payments(id, project_id, provider, provider_payment_id, status, amount_cents, currency, credits_granted, metadata) values($1, $2, 'mock-payment', $3, 'succeeded', $4, 'USD', $5, $6)`, "payment_demo_topup", projectID, "pay_mock_demo_topup", 10000, 10000, `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into payment_transactions(id, payment_id, payment_method_id, project_id, transaction_type, provider, provider_transaction_id, status, amount_cents, currency, credits_delta, idempotency_key, metadata) values($1, $2, $3, $4, 'top_up', 'mock-payment', $5, 'succeeded', $6, 'USD', $7, $8, $9)`, "payment_txn_demo_topup", "payment_demo_topup", "payment_method_demo_card", projectID, "txn_mock_demo_topup", 10000, 10000, "payment-txn-demo-topup", `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into user_interaction_history(id, user_id, organization_id, project_id, session_id, interaction_type, surface, target_type, target_id, event_name, metadata) values($1, $2, $3, $4, null, 'auth', 'dashboard', 'user', $2, 'dev_login', $5)`, "interaction_dev_test_login", "user_admin_example_com", orgID, projectID, `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into user_interaction_history(id, user_id, organization_id, project_id, session_id, interaction_type, surface, target_type, target_id, event_name, metadata) values($1, $2, $3, $4, null, 'view', 'catalog', 'model', $5, 'view_model_catalog', $6)`, "interaction_dev_test_catalog", "user_admin_example_com", orgID, projectID, "model_mock-chat", `{"source":"dev_test_data.json"}`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into user_interaction_history(id, user_id, organization_id, project_id, session_id, interaction_type, surface, target_type, target_id, event_name, metadata) values($1, $2, $3, $4, null, 'message', 'workbench', 'conversation', $5, 'send_chat_message', $6)`, "interaction_dev_test_workbench", "user_admin_example_com", orgID, projectID, "conversation_seed_demo", `{"source":"dev_test_data.json"}`); err != nil {
 		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	logger.Info("dev_seed_loaded", "dir", dir)
+	logger.Info("dev_test_data_loaded", "dir", dir)
 	return nil
 }
 
 func Reset(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, deleteSeedSQL())
 	if err != nil {
-		return fmt.Errorf("reset seed data: %w", err)
+		return fmt.Errorf("reset dev test data: %w", err)
 	}
 	return nil
 }
@@ -186,6 +212,7 @@ func resetTx(ctx context.Context, tx *sql.Tx) error {
 
 func deleteSeedSQL() string {
 	return `delete from audit_logs;
+delete from user_interaction_history;
 delete from provider_health_events;
 delete from notifications;
 delete from provider_settlements;
@@ -196,6 +223,8 @@ delete from routing_policies;
 delete from coupons;
 delete from invoice_items;
 delete from invoices;
+delete from payment_transactions;
+delete from payment_methods;
 delete from payments;
 delete from usage_events;
 delete from job_events;

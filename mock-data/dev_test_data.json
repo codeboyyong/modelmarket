@@ -66,9 +66,14 @@
         }
       },
       "price": {
-        "unit_type": "request",
-        "customer_price_credits": 1,
-        "provider_cost_credits": 0
+        "input_token_price": 0.1,
+        "input_token_price_unit": "1k_tokens",
+        "output_token_price": 0.6,
+        "output_token_price_unit": "1k_tokens",
+        "provider_input_token_cost": 0,
+        "provider_input_token_cost_unit": "1k_tokens",
+        "provider_output_token_cost": 0,
+        "provider_output_token_cost_unit": "1k_tokens"
       }
     },
     {
@@ -90,9 +95,14 @@
         }
       },
       "price": {
-        "unit_type": "image",
-        "customer_price_credits": 10,
-        "provider_cost_credits": 0
+        "input_token_price": 0,
+        "input_token_price_unit": "prompt",
+        "output_token_price": 10,
+        "output_token_price_unit": "image_1024",
+        "provider_input_token_cost": 0,
+        "provider_input_token_cost_unit": "prompt",
+        "provider_output_token_cost": 0,
+        "provider_output_token_cost_unit": "image_1024"
       }
     }
   ],
