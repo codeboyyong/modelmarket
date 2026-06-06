@@ -1,22 +1,26 @@
 #!/usr/bin/env sh
 set -eu
 
-APP_ENV_ARG="${1:-dev}"
-export APP_ENV="$APP_ENV_ARG"
+MM_APP_ENV_ARG="${1:-dev}"
+export MM_APP_ENV="$MM_APP_ENV_ARG"
 
 load_env_file() {
   file="$1"
+
   if [ -f "$file" ]; then
+    echo "Loading environment variables from $file ..."
     set -a
     # shellcheck disable=SC1090
     . "$file"
     set +a
+  else
+    echo "File $file does not exist, skipping."  
   fi
 }
 
 load_env_file ".env"
-load_env_file ".env.${APP_ENV}"
-load_env_file "deploy/env/${APP_ENV}.env"
+load_env_file ".env.${MM_APP_ENV}"
+# load_env_file "deploy/env/${MM_APP_ENV}.env"
 
 export MM_DB_DRIVER="${MM_DB_DRIVER:-postgres}"
 export MM_DB_HOST="${MM_DB_HOST:-localhost}"
@@ -30,7 +34,7 @@ else
 fi
 
 if [ -z "${MM_DB_SSL_MODE:-}" ]; then
-  case "$APP_ENV" in
+  case "$MM_APP_ENV" in
     prod|production|qa|staging)
       export MM_DB_SSL_MODE="require"
       ;;

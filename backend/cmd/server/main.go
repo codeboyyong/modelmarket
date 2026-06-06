@@ -25,6 +25,7 @@ import (
 func main() {
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel()}))
+	logger.Info("app_starting", "MM_APP_ENV", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_url", cfg.DatabaseURL, "db_ssl_mode", cfg.DBSSLMode)
 
 	db, err := sql.Open(cfg.SQLDriverName(), cfg.DatabaseURL)
 	if err != nil {
@@ -66,7 +67,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Info("server_starting", "addr", cfg.HTTPAddr, "app_env", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_driver", cfg.DBDriver, "db_ssl_mode", cfg.DBSSLMode)
+	logger.Info("server_starting", "addr", cfg.HTTPAddr, "MM_APP_ENV", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_driver", cfg.DBDriver, "db_ssl_mode", cfg.DBSSLMode)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server_failed", "error", err)
 		os.Exit(1)

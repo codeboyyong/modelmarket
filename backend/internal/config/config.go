@@ -30,7 +30,7 @@ type Config struct {
 }
 
 func Load() Config {
-	appEnv := env("APP_ENV", "dev")
+	appEnv := env("MM_APP_ENV", "dev")
 	dbSSLMode := env("MM_DB_SSL_MODE", defaultDBSSLMode(appEnv))
 	dbHost := env("MM_DB_HOST", "localhost")
 	dbPort := env("MM_DB_PORT", "5432")

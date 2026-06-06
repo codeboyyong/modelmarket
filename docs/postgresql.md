@@ -5,7 +5,7 @@ This project uses PostgreSQL as the implemented Phase 1 database.
 Default dev configuration:
 
 ```sh
-APP_ENV=dev
+MM_APP_ENV=dev
 MM_DB_DRIVER=postgres
 MM_DB_HOST=localhost
 MM_DB_PORT=5432
@@ -130,13 +130,13 @@ The DB scripts load environment values from these files when present:
 ```text
 .env
 .env.<environment>
-deploy/env/<environment>.env
+<!-- deploy/env/<environment>.env -->
 ```
 
 Example dev env file:
 
 ```sh
-APP_ENV=dev
+MM_APP_ENV=dev
 DEV_MODE=true
 MM_DB_DRIVER=postgres
 MM_DB_HOST=localhost

@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoadUsesDefaults(t *testing.T) {
-	unsetEnv(t, "APP_ENV", "HTTP_ADDR", "MM_DATABASE_URL", "MM_DB_DRIVER", "MM_DB_HOST", "MM_DB_PORT", "MM_DB_NAME", "MM_DB_USER", "MM_DB_PASSWORD", "MM_DB_SSL_MODE", "REDIS_ADDR", "DEV_MODE", "LOG_LEVEL")
+	unsetEnv(t, "MM_APP_ENV", "HTTP_ADDR", "MM_DATABASE_URL", "MM_DB_DRIVER", "MM_DB_HOST", "MM_DB_PORT", "MM_DB_NAME", "MM_DB_USER", "MM_DB_PASSWORD", "MM_DB_SSL_MODE", "REDIS_ADDR", "DEV_MODE", "LOG_LEVEL")
 
 	cfg := Load()
 
@@ -29,7 +29,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.DBSSLMode != "disable" {
 		t.Fatalf("DBSSLMode = %q", cfg.DBSSLMode)
 	}
-	if cfg.DatabaseURL != "postgres://model_market:model_market@localhost:5432/model_market?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://model_market:model_market@192.168.1.167:5432/model_market?sslmode=disable" {
 		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
 	}
 	if !cfg.DevMode {
@@ -64,7 +64,7 @@ func unsetEnv(t *testing.T, keys ...string) {
 }
 
 func TestLoadReadsEnvironment(t *testing.T) {
-	t.Setenv("APP_ENV", "qa")
+	t.Setenv("MM_APP_ENV", "qa")
 	t.Setenv("HTTP_ADDR", ":9090")
 	t.Setenv("MM_DATABASE_URL", "postgres://example")
 	t.Setenv("MM_DB_DRIVER", "postgresql")
@@ -96,7 +96,7 @@ func TestLoadReadsEnvironment(t *testing.T) {
 }
 
 func TestLoadBuildsProdDatabaseURLWithSSL(t *testing.T) {
-	t.Setenv("APP_ENV", "prod")
+	t.Setenv("MM_APP_ENV", "prod")
 	t.Setenv("MM_DATABASE_URL", "")
 	t.Setenv("MM_DB_HOST", "db.example.com")
 	t.Setenv("MM_DB_PORT", "5432")
@@ -116,7 +116,7 @@ func TestLoadBuildsProdDatabaseURLWithSSL(t *testing.T) {
 }
 
 func TestLoadAllowsExplicitSSLMode(t *testing.T) {
-	t.Setenv("APP_ENV", "prod")
+	t.Setenv("MM_APP_ENV", "prod")
 	t.Setenv("MM_DATABASE_URL", "")
 	t.Setenv("MM_DB_HOST", "db.example.com")
 	t.Setenv("MM_DB_PORT", "5432")

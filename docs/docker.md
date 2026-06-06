@@ -100,7 +100,7 @@ PostgreSQL is the implemented database for Phase 1.
 The backend reads database config from environment variables. You can set a full connection string:
 
 ```sh
-APP_ENV=prod
+MM_APP_ENV=prod
 MM_DB_DRIVER=postgres
 MM_DATABASE_URL='postgres://user:password@db.example.com:5432/model_market?sslmode=require'
 ```
@@ -108,7 +108,7 @@ MM_DATABASE_URL='postgres://user:password@db.example.com:5432/model_market?sslmo
 Or build it from individual fields:
 
 ```sh
-APP_ENV=qa
+MM_APP_ENV=qa
 MM_DB_DRIVER=postgres
 MM_DB_HOST=db.example.com
 MM_DB_PORT=5432

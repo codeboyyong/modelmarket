@@ -141,6 +141,7 @@ The test-data script clears existing dev test rows before inserting, so it can b
 If PostgreSQL and Redis are already running locally:
 
 ```sh
+MM_APP_ENV=dev
 cd backend
 GOCACHE="$(pwd)/../.cache/go-build" \
 GOMODCACHE="$(pwd)/../.cache/go-mod" \
@@ -149,7 +150,7 @@ go run ./cmd/server
 
 Default backend config:
 
-- `APP_ENV=dev`
+- `MM_APP_ENV=dev`
 - `MM_DB_DRIVER=postgres`
 - `MM_DB_HOST=localhost`
 - `MM_DB_PORT=5432`
@@ -165,7 +166,7 @@ Default backend config:
 You can also set `MM_DATABASE_URL` directly. For qa/prod, use SSL, for example:
 
 ```sh
-APP_ENV=prod
+MM_APP_ENV=prod
 MM_DATABASE_URL='postgres://user:password@db.example.com:5432/model_market?sslmode=require'
 ```
 
