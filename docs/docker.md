@@ -4,7 +4,7 @@
 
 The local stack is defined in `docker-compose.yml`.
 
-Start the app:
+Start the app with PostgreSQL, backend, and frontend:
 
 ```sh
 scripts/dev-up.sh
@@ -22,6 +22,12 @@ The Compose helper supports both Docker Compose forms:
 - `docker-compose`
 
 If neither is installed, `scripts/compose.sh` will print a clear error.
+
+Redis is optional in Phase 1. It is kept as a Compose profile for future cache, rate-limit, session, queue, or temporary-state work:
+
+```sh
+docker compose --profile redis up redis
+```
 
 ## Docker on Mac
 

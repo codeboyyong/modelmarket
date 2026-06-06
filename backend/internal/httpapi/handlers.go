@@ -27,9 +27,11 @@ func (a *App) ready(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "database": err.Error()})
 		return
 	}
-	if err := a.Redis.Ping(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "redis": err.Error()})
-		return
+	if a.Redis != nil {
+		if err := a.Redis.Ping(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, response{"status": "not_ready", "redis": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, response{"status": "ready"})
 }

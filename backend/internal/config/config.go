@@ -20,6 +20,7 @@ type Config struct {
 	DBUser           string
 	DBPassword       string
 	DBSSLMode        string
+	RedisEnabled     bool
 	RedisAddr        string
 	DevMode          bool
 	MockDataDir      string
@@ -53,6 +54,7 @@ func Load() Config {
 		DBUser:           dbUser,
 		DBPassword:       dbPassword,
 		DBSSLMode:        dbSSLMode,
+		RedisEnabled:     envBool("REDIS_ENABLED", false),
 		RedisAddr:        env("REDIS_ADDR", "localhost:6379"),
 		DevMode:          envBool("DEV_MODE", true),
 		MockDataDir:      env("MOCK_DATA_DIR", "../mock-data"),

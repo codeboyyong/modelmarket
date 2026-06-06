@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoadUsesDefaults(t *testing.T) {
-	unsetEnv(t, "MM_APP_ENV", "HTTP_ADDR", "MM_DATABASE_URL", "MM_DB_DRIVER", "MM_DB_HOST", "MM_DB_PORT", "MM_DB_NAME", "MM_DB_USER", "MM_DB_PASSWORD", "MM_DB_SSL_MODE", "REDIS_ADDR", "DEV_MODE", "LOG_LEVEL")
+	unsetEnv(t, "MM_APP_ENV", "HTTP_ADDR", "MM_DATABASE_URL", "MM_DB_DRIVER", "MM_DB_HOST", "MM_DB_PORT", "MM_DB_NAME", "MM_DB_USER", "MM_DB_PASSWORD", "MM_DB_SSL_MODE", "REDIS_ENABLED", "REDIS_ADDR", "DEV_MODE", "LOG_LEVEL")
 
 	cfg := Load()
 
@@ -16,6 +16,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.RedisAddr != "localhost:6379" {
 		t.Fatalf("RedisAddr = %q", cfg.RedisAddr)
+	}
+	if cfg.RedisEnabled {
+		t.Fatal("RedisEnabled default should be false")
 	}
 	if cfg.AppEnv != "dev" {
 		t.Fatalf("AppEnv = %q", cfg.AppEnv)
@@ -29,7 +32,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.DBSSLMode != "disable" {
 		t.Fatalf("DBSSLMode = %q", cfg.DBSSLMode)
 	}
-	if cfg.DatabaseURL != "postgres://model_market:model_market@192.168.1.167:5432/model_market?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://model_market:model_market@localhost:5432/model_market?sslmode=disable" {
 		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
 	}
 	if !cfg.DevMode {
@@ -68,6 +71,7 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9090")
 	t.Setenv("MM_DATABASE_URL", "postgres://example")
 	t.Setenv("MM_DB_DRIVER", "postgresql")
+	t.Setenv("REDIS_ENABLED", "true")
 	t.Setenv("REDIS_ADDR", "redis:6379")
 	t.Setenv("DEV_MODE", "false")
 	t.Setenv("LOG_LEVEL", "debug")
@@ -83,6 +87,9 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	}
 	if cfg.SQLDriverName() != "pgx" {
 		t.Fatalf("SQLDriverName = %q", cfg.SQLDriverName())
+	}
+	if !cfg.RedisEnabled {
+		t.Fatal("RedisEnabled should read true")
 	}
 	if cfg.DevMode {
 		t.Fatal("DevMode should read false")

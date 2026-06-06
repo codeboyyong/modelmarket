@@ -79,6 +79,27 @@ func TestReady(t *testing.T) {
 	}
 }
 
+func TestReadyAllowsRedisDisabled(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	app.Redis = nil
+
+	mock.ExpectPing()
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "status", "ready")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDevLogin(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()

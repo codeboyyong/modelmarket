@@ -145,6 +145,7 @@ MM_DB_NAME=model_market
 MM_DB_USER=model_market
 MM_DB_PASSWORD=model_market
 MM_DB_SSL_MODE=disable
+REDIS_ENABLED=false
 REDIS_ADDR=localhost:6379
 ```
 
@@ -204,7 +205,7 @@ select paid_credits, promotional_credits from wallets;
 
 ## Run Backend Manually
 
-If PostgreSQL and Redis are already running:
+If PostgreSQL is already running:
 
 ```sh
 cd backend

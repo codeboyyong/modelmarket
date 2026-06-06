@@ -15,15 +15,17 @@ services:
       timeout: 3s
       retries: 20
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+  # redis:
+  #   image: redis:7-alpine
+  #   profiles:
+  #     - redis
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 20
 
   backend:
     build:
@@ -39,6 +41,7 @@ services:
       MM_DB_USER: "model_market"
       MM_DB_PASSWORD: "model_market"
       MM_DB_SSL_MODE: "disable"
+      REDIS_ENABLED: "false"
       REDIS_ADDR: "redis:6379"
       DEV_MODE: "true"
       MOCK_DATA_DIR: "mock-data"
@@ -52,8 +55,6 @@ services:
       - "8080:8080"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]

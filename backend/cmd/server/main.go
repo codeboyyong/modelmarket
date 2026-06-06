@@ -37,8 +37,12 @@ func main() {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
 
-	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	defer redisClient.Close()
+	var redisHealth httpapi.RedisPinger
+	if cfg.RedisEnabled {
+		redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+		defer redisClient.Close()
+		redisHealth = redisPinger{client: redisClient}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -57,7 +61,7 @@ func main() {
 	app := &httpapi.App{
 		Config: cfg,
 		DB:     db,
-		Redis:  redisPinger{client: redisClient},
+		Redis:  redisHealth,
 		Logger: logger,
 	}
 
@@ -67,7 +71,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Info("server_starting", "addr", cfg.HTTPAddr, "MM_APP_ENV", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_driver", cfg.DBDriver, "db_ssl_mode", cfg.DBSSLMode)
+	logger.Info("server_starting", "addr", cfg.HTTPAddr, "MM_APP_ENV", cfg.AppEnv, "dev_mode", cfg.DevMode, "db_driver", cfg.DBDriver, "db_ssl_mode", cfg.DBSSLMode, "redis_enabled", cfg.RedisEnabled)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server_failed", "error", err)
 		os.Exit(1)

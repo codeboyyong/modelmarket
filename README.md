@@ -7,7 +7,7 @@ The current implementation is a local developer scaffold:
 - Go backend API
 - Node.js + TypeScript frontend
 - PostgreSQL schema migrations
-- Redis connection
+- optional Redis readiness hook for future cache/rate-limit/session work
 - repo-owned dev test/mock data
 - Docker Compose stack
 - basic API key flow
@@ -54,7 +54,7 @@ Expected backend output includes `ok` lines for tested packages. The `cmd/server
 
 ## Start With Docker Compose
 
-Start the full local stack:
+Start the normal local stack:
 
 ```sh
 scripts/dev-up.sh
@@ -73,6 +73,12 @@ The app should be available at:
 - Backend readiness: http://localhost:8080/readyz
 
 The backend runs migrations and loads dev test data automatically when `DEV_MODE=true`.
+
+Redis is optional in Phase 1. The default Docker Compose stack runs with PostgreSQL only. To start Redis as well for future cache/rate-limit experiments:
+
+```sh
+docker compose --profile redis up redis
+```
 
 ## Environment
 
@@ -138,7 +144,7 @@ The test-data script clears existing dev test rows before inserting, so it can b
 
 ## Manual Backend Run
 
-If PostgreSQL and Redis are already running locally:
+If PostgreSQL is already running locally:
 
 ```sh
 MM_APP_ENV=dev
@@ -158,6 +164,7 @@ Default backend config:
 - `MM_DB_USER=model_market`
 - `MM_DB_PASSWORD=model_market`
 - `MM_DB_SSL_MODE=disable`
+- `REDIS_ENABLED=false`
 - `REDIS_ADDR=localhost:6379`
 - `DEV_MODE=true`
 - `MOCK_DATA_DIR=../mock-data`
