@@ -8,6 +8,7 @@ type Project = {
   organization: string;
   paid_credits: number;
   promotional_credits: number;
+  credits_used: number;
 };
 
 type Conversation = {
@@ -17,6 +18,15 @@ type Conversation = {
   message_count: number;
 };
 
+type ConversationBranch = {
+  id: string;
+  conversation_id: string;
+  parent_branch_id: string;
+  name: string;
+  message_count: number;
+  created_at: string;
+};
+
 type WorkspaceAsset = {
   id: string;
   conversation_id: string;
@@ -24,6 +34,18 @@ type WorkspaceAsset = {
   storage_path: string;
   mime_type: string;
   size_bytes: number;
+};
+
+type ConversationMessage = {
+  id: string;
+  role: "user" | "assistant" | string;
+  content: string;
+  model_profile_id: string;
+  inference_request_id: string;
+  customer_charge: number;
+  provider_cost: number;
+  metadata: string;
+  created_at: string;
 };
 
 type Model = {
@@ -93,6 +115,7 @@ let currentAPIKey = "";
 let models: Model[] = [];
 let projects: Project[] = [];
 let conversations: Conversation[] = [];
+let branches: ConversationBranch[] = [];
 let assets: WorkspaceAsset[] = [];
 let pricingRows: PricingRow[] = [];
 let signupMode = false;
@@ -104,6 +127,8 @@ let workbenchPickerOpen = false;
 let projectPickerOpen = false;
 let conversationPickerOpen = false;
 let currentConversationID = "";
+let currentBranchID = "";
+let branchSourceMessageID = "";
 const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "pricing", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -205,7 +230,7 @@ function renderProjects() {
         const active = project.id === currentProjectID ? " active" : "";
         return `<button class="workspace-row${active}" type="button" data-project-id="${escapeHTML(project.id)}">
           <span><strong>${escapeHTML(project.name)}</strong><small>${escapeHTML(project.organization)}</small></span>
-          <p>${credits.toLocaleString()} credits available</p>
+          <p>${(project.credits_used || 0).toLocaleString()} credits used / ${credits.toLocaleString()} available</p>
         </button>`;
       })
       .join("") || "<div class=\"empty-state\">No project loaded. Run the dev test data script first.</div>";
@@ -239,7 +264,9 @@ async function createProject() {
   });
   projects = [...projects, data.project];
   currentProjectID = data.project.id;
+  currentAPIKey = "";
   currentConversationID = "";
+  currentBranchID = "";
   renderProjects();
   await loadWorkspace();
 }
@@ -247,8 +274,11 @@ async function createProject() {
 async function loadWorkspace() {
   if (!currentProjectID) {
     conversations = [];
+    branches = [];
     assets = [];
+    currentBranchID = "";
     renderWorkspaceLists();
+    renderBranches();
     return;
   }
   try {
@@ -260,13 +290,18 @@ async function loadWorkspace() {
     assets = assetData.assets;
     if (!conversations.some((conversation) => conversation.id === currentConversationID)) {
       currentConversationID = conversations[0]?.id || "";
+      currentBranchID = "";
     }
   } catch {
     conversations = [];
+    branches = [];
     assets = [];
     currentConversationID = "";
+    currentBranchID = "";
   }
   renderWorkspaceLists();
+  await loadConversationBranches();
+  await loadConversationMessages();
 }
 
 function renderWorkspaceLists() {
@@ -310,6 +345,36 @@ function renderSelectedConversation() {
   if (!conversationPickerOpen) ($("conversationFilter") as HTMLInputElement).value = selected?.title || "";
 }
 
+async function loadConversationBranches() {
+  if (!currentConversationID) {
+    branches = [];
+    currentBranchID = "";
+    renderBranches();
+    return;
+  }
+  try {
+    const data = await request<{ branches: ConversationBranch[] }>(`/api/v1/conversation-branches?conversation_id=${encodeURIComponent(currentConversationID)}`);
+    branches = data.branches;
+    if (!branches.some((branch) => branch.id === currentBranchID)) {
+      currentBranchID = branches[0]?.id || "";
+    }
+  } catch {
+    branches = [];
+    currentBranchID = "";
+  }
+  renderBranches();
+}
+
+function renderBranches() {
+  const select = $("branchSelect") as HTMLSelectElement;
+  $("branchPicker").classList.toggle("hidden", branches.length <= 1);
+  select.disabled = branches.length === 0;
+  select.innerHTML =
+    branches
+      .map((branch) => `<option value="${escapeHTML(branch.id)}"${branch.id === currentBranchID ? " selected" : ""}>${escapeHTML(branch.name)} (${branch.message_count})</option>`)
+      .join("") || "<option value=\"\">Select a conversation first</option>";
+}
+
 function openConversationPicker(clearFilter = false) {
   conversationPickerOpen = true;
   if (clearFilter) ($("conversationFilter") as HTMLInputElement).value = "";
@@ -330,6 +395,58 @@ function closeFooterMenus() {
   });
 }
 
+async function loadConversationMessages() {
+  const transcript = $("chatTranscript");
+  if (!currentConversationID) {
+    transcript.innerHTML = "<div class=\"message assistant\">Select or create a conversation to resume work.</div>";
+    return;
+  }
+  transcript.innerHTML = "<div class=\"message assistant\">Loading conversation...</div>";
+  try {
+    const branchQuery = currentBranchID ? `&branch_id=${encodeURIComponent(currentBranchID)}` : "";
+    const data = await request<{ messages: ConversationMessage[] }>(`/api/v1/messages?conversation_id=${encodeURIComponent(currentConversationID)}${branchQuery}`);
+    transcript.innerHTML =
+      data.messages
+        .map((message) => renderConversationMessage(message))
+        .join("") || "<div class=\"message assistant\">This conversation is empty. Send a prompt to start.</div>";
+    transcript.scrollTop = transcript.scrollHeight;
+  } catch (error) {
+    transcript.innerHTML = `<div class="message assistant">${escapeHTML(error instanceof Error ? error.message : String(error))}</div>`;
+  }
+}
+
+function renderConversationMessage(message: ConversationMessage) {
+  const role = message.role === "user" ? "user" : "assistant";
+  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${escapeHTML(message.content)}</div>`;
+}
+
+function openMessageContextMenu(messageID: string, x: number, y: number) {
+  branchSourceMessageID = messageID;
+  const menu = $("messageContextMenu");
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.classList.remove("hidden");
+}
+
+function closeMessageContextMenu() {
+  branchSourceMessageID = "";
+  $("messageContextMenu").classList.add("hidden");
+}
+
+async function startBranchFromMessage() {
+  if (!currentConversationID || !branchSourceMessageID) return;
+  const data = await request<{ branch: ConversationBranch }>("/api/v1/conversation-branches", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: currentConversationID, source_message_id: branchSourceMessageID })
+  });
+  currentBranchID = data.branch.id;
+  closeMessageContextMenu();
+  await loadConversationBranches();
+  currentBranchID = data.branch.id;
+  renderBranches();
+  await loadConversationMessages();
+}
+
 async function createConversation() {
   if (!currentProjectID) throw new Error("Create or select a project first.");
   const title = window.prompt("Conversation title") || "New conversation";
@@ -339,7 +456,10 @@ async function createConversation() {
   });
   conversations = [data.conversation, ...conversations];
   currentConversationID = data.conversation.id;
+  currentBranchID = "";
   renderWorkspaceLists();
+  await loadConversationBranches();
+  await loadConversationMessages();
 }
 
 async function loadModels() {
@@ -571,17 +691,19 @@ async function createKey() {
 
 async function sendPrompt() {
   if (!currentAPIKey) await createKey();
+  if (!currentConversationID) throw new Error("Select or create a conversation first.");
   const model = selectedWorkbenchModel || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
   const prompt = ($("prompt") as HTMLTextAreaElement).value;
   appendMessage("user", prompt);
   const data = await request<ChatResponse>("/api/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${currentAPIKey}` },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] })
+    body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }] })
   });
   const answer = data.choices?.[0]?.message?.content || "Mock response received from backend.";
   appendMessage("assistant", answer);
   await loadSummary();
+  await loadWorkspace();
 }
 
 function appendMessage(role: "user" | "assistant", content: string) {
@@ -917,7 +1039,9 @@ $("projects").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-project-id]");
   if (!button) return;
   currentProjectID = button.dataset.projectId || currentProjectID;
+  currentAPIKey = "";
   currentConversationID = "";
+  currentBranchID = "";
   closeProjectPicker();
   renderProjects();
   loadWorkspace().catch(showError);
@@ -926,8 +1050,23 @@ $("conversations").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-conversation-id]");
   if (!button) return;
   currentConversationID = button.dataset.conversationId || currentConversationID;
+  currentBranchID = "";
   closeConversationPicker();
+  loadConversationBranches()
+    .then(loadConversationMessages)
+    .catch(showError);
 });
+$("branchSelect").addEventListener("change", (event) => {
+  currentBranchID = (event.target as HTMLSelectElement).value;
+  loadConversationMessages().catch(showError);
+});
+$("chatTranscript").addEventListener("contextmenu", (event) => {
+  const message = (event.target as HTMLElement).closest<HTMLElement>("[data-message-id]");
+  if (!message) return;
+  event.preventDefault();
+  openMessageContextMenu(message.dataset.messageId || "", event.clientX, event.clientY);
+});
+$("branchFromMessage").addEventListener("click", () => startBranchFromMessage().catch(showError));
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
 $("backToModels").addEventListener("click", () => setActiveTab("models"));
 $("modelsGrid").addEventListener("click", (event) => {
@@ -974,6 +1113,7 @@ $("workbenchModelList").addEventListener("click", (event) => {
 });
 document.addEventListener("click", (event) => {
   const target = event.target as Node;
+  if (!$("messageContextMenu").contains(target)) closeMessageContextMenu();
   const picker = document.querySelector(".workbench-model-picker");
   if (picker && !picker.contains(target)) closeWorkbenchPicker();
   const projectPicker = document.querySelector("#projectPicker");

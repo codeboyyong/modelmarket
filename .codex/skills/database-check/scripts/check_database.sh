@@ -72,14 +72,15 @@ run_psql -v ON_ERROR_STOP=1 -X <<'SQL'
 \pset pager off
 
 \echo 'Counts'
-select 'models' as metric, cast(count(*) as varchar) as value from models
+select 'models' as metric, cast(count(*) as varchar) as value from sys_models
 union all
 select 'tables' as metric, cast(count(*) as varchar) as value
 from information_schema.tables
 where table_schema = current_schema()
   and table_type = 'BASE TABLE'
+  and (table_name like 'sys\_%' escape '\' or table_name like 'user\_%' escape '\')
 union all
-select 'users' as metric, cast(count(*) as varchar) as value from users
+select 'users' as metric, cast(count(*) as varchar) as value from sys_users
 order by metric;
 
 \echo ''
@@ -98,9 +99,9 @@ select
   pr.provider_output_token_cost_unit,
   pr.currency,
   pr.effective_at
-from price_rules pr
-left join models m on m.id = pr.model_id
-left join providers p on p.id = m.provider_id
-left join model_profiles mp on mp.id = pr.model_profile_id
+from sys_price_rules pr
+left join sys_models m on m.id = pr.model_id
+left join sys_providers p on p.id = m.provider_id
+left join sys_model_profiles mp on mp.id = pr.model_profile_id
 order by p.slug, m.slug, mp.slug, pr.effective_at;
 SQL

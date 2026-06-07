@@ -1,94 +1,94 @@
 -- Portable deterministic test data for Model Market.
 -- IDs are explicit so this file does not require database-specific UUID functions.
 
-DELETE FROM provider_settlements;
-DELETE FROM audit_logs;
-DELETE FROM webhook_endpoints;
-DELETE FROM budget_policies;
-DELETE FROM routing_policies;
-DELETE FROM async_jobs;
-DELETE FROM usage_events;
-DELETE FROM provider_attempts;
-DELETE FROM inference_requests;
-DELETE FROM embedding_records;
-DELETE FROM file_extractions;
-DELETE FROM message_attachments;
-DELETE FROM workspace_assets;
-DELETE FROM messages;
-DELETE FROM conversation_branches;
-DELETE FROM conversations;
-DELETE FROM coupons;
-DELETE FROM invoices;
-DELETE FROM payments;
-DELETE FROM ledger_transactions;
-DELETE FROM wallets;
-DELETE FROM price_rules;
-DELETE FROM pricing_plans;
-DELETE FROM model_configurations;
-DELETE FROM model_profiles;
-DELETE FROM model_versions;
-DELETE FROM models;
-DELETE FROM capabilities;
-DELETE FROM provider_endpoints;
-DELETE FROM providers;
-DELETE FROM api_keys;
-DELETE FROM projects;
-DELETE FROM memberships;
-DELETE FROM organizations;
-DELETE FROM sessions;
-DELETE FROM oauth_accounts;
-DELETE FROM users;
-DELETE FROM roles;
+DELETE FROM sys_provider_settlements;
+DELETE FROM sys_audit_logs;
+DELETE FROM user_webhook_endpoints;
+DELETE FROM user_budget_policies;
+DELETE FROM user_routing_policies;
+DELETE FROM user_async_jobs;
+DELETE FROM user_usage_events;
+DELETE FROM user_provider_attempts;
+DELETE FROM user_inference_requests;
+DELETE FROM user_embedding_records;
+DELETE FROM user_file_extractions;
+DELETE FROM user_message_attachments;
+DELETE FROM user_workspace_assets;
+DELETE FROM user_messages;
+DELETE FROM user_conversation_branches;
+DELETE FROM user_conversations;
+DELETE FROM sys_coupons;
+DELETE FROM user_invoices;
+DELETE FROM user_payments;
+DELETE FROM user_ledger_transactions;
+DELETE FROM user_wallets;
+DELETE FROM sys_price_rules;
+DELETE FROM sys_pricing_plans;
+DELETE FROM sys_model_configurations;
+DELETE FROM sys_model_profiles;
+DELETE FROM sys_model_versions;
+DELETE FROM sys_models;
+DELETE FROM sys_capabilities;
+DELETE FROM sys_provider_endpoints;
+DELETE FROM sys_providers;
+DELETE FROM user_api_keys;
+DELETE FROM user_projects;
+DELETE FROM sys_memberships;
+DELETE FROM sys_organizations;
+DELETE FROM sys_sessions;
+DELETE FROM sys_oauth_accounts;
+DELETE FROM sys_users;
+DELETE FROM sys_roles;
 
-INSERT INTO roles (id, name, description) VALUES
+INSERT INTO sys_roles (id, name, description) VALUES
   ('role-owner', 'owner', 'Organization owner'),
   ('role-admin', 'admin', 'Organization administrator'),
   ('role-developer', 'developer', 'Developer user'),
   ('role-readonly', 'readonly', 'Read-only user');
 
-INSERT INTO users (id, email, name, avatar_url, status) VALUES
-  ('user-admin', 'admin@example.com', 'Admin User', NULL, 'active'),
-  ('user-developer', 'developer@example.com', 'Developer User', NULL, 'active');
+INSERT INTO sys_users (id, email, name, avatar_url, status, ui_theme, language) VALUES
+  ('user-admin', 'admin@example.com', 'Admin User', NULL, 'active', 'Light', 'EN'),
+  ('user-developer', 'developer@example.com', 'Developer User', NULL, 'active', 'Light', 'EN');
 
-INSERT INTO oauth_accounts (id, user_id, provider, provider_account_id, email, display_name) VALUES
+INSERT INTO sys_oauth_accounts (id, user_id, provider, provider_account_id, email, display_name) VALUES
   ('oauth-google-admin', 'user-admin', 'google', 'google-admin-dev', 'admin@example.com', 'Admin User'),
   ('oauth-github-admin', 'user-admin', 'github', 'github-admin-dev', 'admin@example.com', 'Admin User'),
   ('oauth-facebook-dev', 'user-developer', 'facebook', 'facebook-dev-dev', 'developer@example.com', 'Developer User');
 
-INSERT INTO organizations (id, name, slug, status) VALUES
+INSERT INTO sys_organizations (id, name, slug, status) VALUES
   ('org-demo', 'Demo Organization', 'demo-org', 'active');
 
-INSERT INTO memberships (id, user_id, organization_id, role) VALUES
+INSERT INTO sys_memberships (id, user_id, organization_id, role) VALUES
   ('membership-admin', 'user-admin', 'org-demo', 'owner'),
   ('membership-developer', 'user-developer', 'org-demo', 'developer');
 
-INSERT INTO projects (id, organization_id, name, slug, environment, retention_policy) VALUES
+INSERT INTO user_projects (id, organization_id, name, slug, environment, retention_policy) VALUES
   ('project-demo', 'org-demo', 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}'),
   ('project-image-studio', 'org-demo', 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
   ('project-video-lab', 'org-demo', 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":30,"asset_days":30}');
 
-INSERT INTO api_keys (id, project_id, name, prefix, key_hash, scopes, status) VALUES
+INSERT INTO user_api_keys (id, project_id, name, prefix, key_hash, scopes, status) VALUES
   ('api-key-demo', 'project-demo', 'Seeded development key', 'mk_seeded', 'seeded-key-hash-replace-before-real-use', 'models:read,chat:create', 'active'),
   ('api-key-image-studio', 'project-image-studio', 'Image Studio demo key', 'mk_imgdemo', 'image-studio-demo-key-hash', 'models:read,chat:create', 'active'),
   ('api-key-video-lab', 'project-video-lab', 'Video Lab demo key', 'mk_viddemo', 'video-lab-demo-key-hash', 'models:read,chat:create', 'active');
 
-INSERT INTO providers (id, slug, name, status, endpoint_url, credential_ref, metadata) VALUES
+INSERT INTO sys_providers (id, slug, name, status, endpoint_url, credential_ref, metadata) VALUES
   ('provider-mock', 'mock-provider', 'Mock Provider', 'active', 'mock://provider', NULL, '{"mode":"dev","supports_streaming":true}'),
   ('provider-openrouter', 'openrouter', 'OpenRouter', 'active', 'https://openrouter.ai/api/v1', 'OPENROUTER_API_KEY', '{"source":"https://openrouter.ai/models","supports_multimodal":true}'),
   ('provider-openai-placeholder', 'openai-placeholder', 'OpenAI Placeholder', 'inactive', 'https://api.openai.com', 'OPENAI_API_KEY', '{"enabled_by_default":false}');
 
-INSERT INTO provider_endpoints (id, provider_id, name, endpoint_url, region, status, metadata) VALUES
+INSERT INTO sys_provider_endpoints (id, provider_id, name, endpoint_url, region, status, metadata) VALUES
   ('endpoint-mock-default', 'provider-mock', 'Mock Default Endpoint', 'mock://provider/default', 'local', 'active', '{}'),
   ('endpoint-openrouter-default', 'provider-openrouter', 'OpenRouter Default Endpoint', 'https://openrouter.ai/api/v1', 'global', 'active', '{"models_url":"https://openrouter.ai/api/v1/models","video_models_url":"https://openrouter.ai/api/v1/videos/models"}'),
   ('endpoint-openai-default', 'provider-openai-placeholder', 'OpenAI Default Endpoint', 'https://api.openai.com', 'global', 'inactive', '{}');
 
-INSERT INTO capabilities (id, slug, name, description) VALUES
+INSERT INTO sys_capabilities (id, slug, name, description) VALUES
   ('cap-chat', 'chat', 'Chat', 'Chat completion support'),
   ('cap-streaming', 'streaming', 'Streaming', 'Streaming response support'),
   ('cap-image-generation', 'image-generation', 'Image Generation', 'Image generation support'),
   ('cap-async-jobs', 'async-jobs', 'Async Jobs', 'Long-running async job support');
 
-INSERT INTO models (id, provider_id, slug, name, modality, status, context_window, capabilities, metadata) VALUES
+INSERT INTO sys_models (id, provider_id, slug, name, modality, status, context_window, capabilities, metadata) VALUES
   ('model-mock-chat', 'provider-mock', 'mock-chat', 'Mock Chat', 'chat', 'public', 8192, '{"chat":true,"streaming":true,"files":false}', '{"quality_tier":"dev"}'),
   ('model-mock-creative', 'provider-mock', 'mock-creative', 'Mock Creative', 'image', 'public', 0, '{"image_generation":true,"async_jobs":true}', '{"quality_tier":"dev"}'),
   ('model-openrouter-riverflow-v25-pro-free', 'provider-openrouter', 'sourceful/riverflow-v2.5-pro:free', 'Sourceful: Riverflow V2.5 Pro (free)', 'image', 'public', 8192, '{"image_generation":true,"image_input":true}', '{"openrouter_id":"sourceful/riverflow-v2.5-pro:free","canonical_slug":"sourceful/riverflow-v2.5-pro-20260605"}'),
@@ -104,7 +104,7 @@ INSERT INTO models (id, provider_id, slug, name, modality, status, context_windo
   ('model-openrouter-gpt-audio', 'provider-openrouter', 'openai/gpt-audio', 'OpenAI: GPT Audio', 'audio', 'public', 128000, '{"audio_generation":true,"audio_input":true,"chat":true}', '{"openrouter_id":"openai/gpt-audio","canonical_slug":"openai/gpt-audio"}'),
   ('model-openrouter-gpt-audio-mini', 'provider-openrouter', 'openai/gpt-audio-mini', 'OpenAI: GPT Audio Mini', 'audio', 'public', 128000, '{"audio_generation":true,"audio_input":true,"chat":true}', '{"openrouter_id":"openai/gpt-audio-mini","canonical_slug":"openai/gpt-audio-mini"}');
 
-INSERT INTO model_versions (id, model_id, version, status, metadata) VALUES
+INSERT INTO sys_model_versions (id, model_id, version, status, metadata) VALUES
   ('model-version-mock-chat-dev', 'model-mock-chat', 'dev', 'active', '{}'),
   ('model-version-mock-creative-dev', 'model-mock-creative', 'dev', 'active', '{}'),
   ('model-version-openrouter-riverflow-v25-pro-free', 'model-openrouter-riverflow-v25-pro-free', '20260605', 'active', '{}'),
@@ -120,7 +120,7 @@ INSERT INTO model_versions (id, model_id, version, status, metadata) VALUES
   ('model-version-openrouter-gpt-audio', 'model-openrouter-gpt-audio', 'current', 'active', '{}'),
   ('model-version-openrouter-gpt-audio-mini', 'model-openrouter-gpt-audio-mini', 'current', 'active', '{}');
 
-INSERT INTO model_profiles (id, model_id, slug, name, status, system_prompt, default_parameters, safety_settings, config_version) VALUES
+INSERT INTO sys_model_profiles (id, model_id, slug, name, status, system_prompt, default_parameters, safety_settings, config_version) VALUES
   ('profile-mock-chat-default', 'model-mock-chat', 'mock-chat-default', 'Mock Chat Default', 'public', 'You are a helpful mocked assistant for local development.', '{"temperature":0.2,"max_tokens":512}', '{"moderation":"mock"}', 1),
   ('profile-mock-creative-default', 'model-mock-creative', 'mock-creative-default', 'Mock Creative Default', 'public', 'Generate deterministic local development assets.', '{"size":"1024x1024"}', '{"moderation":"mock"}', 1),
   ('profile-openrouter-riverflow-v25-pro-free-default', 'model-openrouter-riverflow-v25-pro-free', 'sourceful-riverflow-v2-5-pro-free-default', 'Sourceful: Riverflow V2.5 Pro (free) Default', 'public', 'Generate high-quality images through OpenRouter.', '{"modalities":["image"],"size":"1024x1024"}', '{"moderation":"provider"}', 1),
@@ -136,7 +136,7 @@ INSERT INTO model_profiles (id, model_id, slug, name, status, system_prompt, def
   ('profile-openrouter-gpt-audio-default', 'model-openrouter-gpt-audio', 'openai-gpt-audio-default', 'OpenAI: GPT Audio Default', 'public', 'Generate and process audio through OpenRouter.', '{"modalities":["text","audio"],"voice":"alloy"}', '{"moderation":"provider"}', 1),
   ('profile-openrouter-gpt-audio-mini-default', 'model-openrouter-gpt-audio-mini', 'openai-gpt-audio-mini-default', 'OpenAI: GPT Audio Mini Default', 'public', 'Generate and process audio through OpenRouter.', '{"modalities":["text","audio"],"voice":"alloy"}', '{"moderation":"provider"}', 1);
 
-INSERT INTO model_configurations (id, model_profile_id, version, config_data, status) VALUES
+INSERT INTO sys_model_configurations (id, model_profile_id, version, config_data, status) VALUES
   ('config-mock-chat-v1', 'profile-mock-chat-default', 1, '{"system_prompt":"You are a helpful mocked assistant for local development.","temperature":0.2,"max_tokens":512}', 'published'),
   ('config-mock-creative-v1', 'profile-mock-creative-default', 1, '{"system_prompt":"Generate deterministic local development assets.","size":"1024x1024"}', 'published'),
   ('config-openrouter-riverflow-v25-pro-free-v1', 'profile-openrouter-riverflow-v25-pro-free-default', 1, '{"model":"sourceful/riverflow-v2.5-pro:free","modalities":["image"],"size":"1024x1024"}', 'published'),
@@ -152,10 +152,10 @@ INSERT INTO model_configurations (id, model_profile_id, version, config_data, st
   ('config-openrouter-gpt-audio-v1', 'profile-openrouter-gpt-audio-default', 1, '{"model":"openai/gpt-audio","modalities":["text","audio"],"voice":"alloy"}', 'published'),
   ('config-openrouter-gpt-audio-mini-v1', 'profile-openrouter-gpt-audio-mini-default', 1, '{"model":"openai/gpt-audio-mini","modalities":["text","audio"],"voice":"alloy"}', 'published');
 
-INSERT INTO pricing_plans (id, slug, name, status, metadata) VALUES
+INSERT INTO sys_pricing_plans (id, slug, name, status, metadata) VALUES
   ('plan-developer', 'developer', 'Developer', 'active', '{"default":true}');
 
-INSERT INTO price_rules (
+INSERT INTO sys_price_rules (
   id,
   model_id,
   model_profile_id,
@@ -185,83 +185,94 @@ INSERT INTO price_rules (
   ('price-openrouter-gpt-audio-audio', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 0.0025, '1k_tokens', 0.01, '1k_tokens', 0.0025, '1k_tokens', 0.01, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.000032"}'),
   ('price-openrouter-gpt-audio-mini-audio', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.0000006"}');
 
-INSERT INTO wallets (id, project_id, paid_credits, promotional_credits) VALUES
+INSERT INTO user_wallets (id, project_id, paid_credits, promotional_credits) VALUES
   ('wallet-demo', 'project-demo', 10000, 5000),
   ('wallet-image-studio', 'project-image-studio', 2500, 1500),
   ('wallet-video-lab', 'project-video-lab', 5000, 2000);
 
-INSERT INTO ledger_transactions (id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) VALUES
+INSERT INTO user_ledger_transactions (id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) VALUES
   ('ledger-dev-paid', 'wallet-demo', 'grant', 10000, 'paid', 'posted', 'dev seed paid credits', 'dev-seed-paid-credit-grant', '{}'),
   ('ledger-dev-promo', 'wallet-demo', 'grant', 5000, 'promotional', 'posted', 'dev seed promotional credits', 'dev-seed-promo-credit-grant', '{}');
 
-INSERT INTO coupons (id, code, credit_amount, status, metadata) VALUES
+INSERT INTO sys_coupons (id, code, credit_amount, status, metadata) VALUES
   ('coupon-dev-welcome', 'DEV-WELCOME', 1000, 'active', '{"description":"Development welcome coupon"}');
 
-INSERT INTO conversations (id, project_id, title, status) VALUES
+INSERT INTO user_conversations (id, project_id, title, status) VALUES
   ('conversation-demo', 'project-demo', 'Seeded demo conversation', 'active'),
   ('conversation-image-product', 'project-image-studio', 'Product hero image concepts', 'active'),
   ('conversation-image-avatar', 'project-image-studio', 'Avatar style exploration', 'active'),
   ('conversation-video-launch', 'project-video-lab', 'Launch teaser storyboard', 'active'),
   ('conversation-video-social', 'project-video-lab', 'Short social clip variants', 'active');
 
-INSERT INTO conversation_branches (id, conversation_id, parent_branch_id, name) VALUES
+INSERT INTO user_conversation_branches (id, conversation_id, parent_branch_id, name) VALUES
   ('branch-demo-main', 'conversation-demo', NULL, 'Main'),
   ('branch-image-product-main', 'conversation-image-product', NULL, 'Main'),
+  ('branch-image-product-dark', 'conversation-image-product', 'branch-image-product-main', 'Dark premium version'),
+  ('branch-image-product-minimal', 'conversation-image-product', 'branch-image-product-main', 'Minimal white-background version'),
   ('branch-image-avatar-main', 'conversation-image-avatar', NULL, 'Main'),
   ('branch-video-launch-main', 'conversation-video-launch', NULL, 'Main'),
   ('branch-video-social-main', 'conversation-video-social', NULL, 'Main');
 
-INSERT INTO messages (id, conversation_id, branch_id, role, content, model_profile_id, metadata) VALUES
-  ('message-demo-user', 'conversation-demo', 'branch-demo-main', 'user', 'What can I do in this model market?', NULL, '{}'),
-  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.', 'profile-mock-chat-default', '{"provider":"mock-provider"}'),
-  ('message-image-product-user', 'conversation-image-product', 'branch-image-product-main', 'user', 'Create a clean product hero image for a compact AI hardware device on a white desk.', NULL, '{}'),
-  ('message-image-product-assistant', 'conversation-image-product', 'branch-image-product-main', 'assistant', 'Generated a bright studio concept with soft shadows, brushed metal details, and a minimal background suitable for a landing page hero.', 'profile-openrouter-mai-image-25-default', '{"provider":"openrouter","artifact":"asset-image-product-hero"}'),
-  ('message-image-avatar-user', 'conversation-image-avatar', 'branch-image-avatar-main', 'user', 'Explore three avatar styles for an engineering team profile page.', NULL, '{}'),
-  ('message-image-avatar-assistant', 'conversation-image-avatar', 'branch-image-avatar-main', 'assistant', 'Created style directions: editorial monochrome portraits, warm illustrated badges, and crisp 3D profile icons.', 'profile-openrouter-grok-imagine-image-quality-default', '{"provider":"openrouter","artifact":"asset-image-avatar-board"}'),
-  ('message-video-launch-user', 'conversation-video-launch', 'branch-video-launch-main', 'user', 'Draft a 10 second launch teaser showing model routing from prompt to final video.', NULL, '{}'),
-  ('message-video-launch-assistant', 'conversation-video-launch', 'branch-video-launch-main', 'assistant', 'Prepared a storyboard with three shots: prompt entry, routing visualization, and generated clip preview with synchronized captions.', 'profile-openrouter-veo-31-fast-default', '{"provider":"openrouter","artifact":"asset-video-launch-storyboard"}'),
-  ('message-video-social-user', 'conversation-video-social', 'branch-video-social-main', 'user', 'Make short social variants for image, audio, and video generation features.', NULL, '{}'),
-  ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', '{"provider":"openrouter","artifact":"asset-video-social-variants"}');
+INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata) VALUES
+  ('message-demo-user', 'conversation-demo', 'branch-demo-main', 'user', 'What can I do in this model market?', NULL, NULL, 0, 0, '{}'),
+  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.', 'profile-mock-chat-default', NULL, 1, 0, '{"provider":"mock-provider"}'),
+  ('message-image-product-user', 'conversation-image-product', 'branch-image-product-main', 'user', 'Create a clean product hero image for a compact AI hardware device on a white desk.', NULL, NULL, 0, 0, '{}'),
+  ('message-image-product-assistant', 'conversation-image-product', 'branch-image-product-main', 'assistant', 'Generated a bright studio concept with soft shadows, brushed metal details, and a minimal background suitable for a landing page hero.', 'profile-openrouter-mai-image-25-default', NULL, 10, 0, '{"provider":"openrouter","artifact":"asset-image-product-hero"}'),
+  ('message-image-product-dark-user', 'conversation-image-product', 'branch-image-product-dark', 'user', 'Fork this concept into a darker premium version with a graphite desk and sharper rim light.', NULL, NULL, 0, 0, '{}'),
+  ('message-image-product-dark-assistant', 'conversation-image-product', 'branch-image-product-dark', 'assistant', 'Created a darker direction with a graphite surface, narrow rim lighting, and a more cinematic composition for premium positioning.', 'profile-openrouter-grok-imagine-image-quality-default', NULL, 10, 0, '{"provider":"openrouter","branch":"dark-premium"}'),
+  ('message-image-product-minimal-user', 'conversation-image-product', 'branch-image-product-minimal', 'user', 'Fork this into a minimal white-background version with more empty space for headline text.', NULL, NULL, 0, 0, '{}'),
+  ('message-image-product-minimal-assistant', 'conversation-image-product', 'branch-image-product-minimal', 'assistant', 'Created a minimal white-background branch with increased negative space, softer shadows, and a centered device angle for marketing copy.', 'profile-openrouter-mai-image-25-default', NULL, 10, 0, '{"provider":"openrouter","branch":"minimal-white"}'),
+  ('message-image-avatar-user', 'conversation-image-avatar', 'branch-image-avatar-main', 'user', 'Explore three avatar styles for an engineering team profile page.', NULL, NULL, 0, 0, '{}'),
+  ('message-image-avatar-assistant', 'conversation-image-avatar', 'branch-image-avatar-main', 'assistant', 'Created style directions: editorial monochrome portraits, warm illustrated badges, and crisp 3D profile icons.', 'profile-openrouter-grok-imagine-image-quality-default', NULL, 10, 0, '{"provider":"openrouter","artifact":"asset-image-avatar-board"}'),
+  ('message-video-launch-user', 'conversation-video-launch', 'branch-video-launch-main', 'user', 'Draft a 10 second launch teaser showing model routing from prompt to final video.', NULL, NULL, 0, 0, '{}'),
+  ('message-video-launch-assistant', 'conversation-video-launch', 'branch-video-launch-main', 'assistant', 'Prepared a storyboard with three shots: prompt entry, routing visualization, and generated clip preview with synchronized captions.', 'profile-openrouter-veo-31-fast-default', NULL, 100, 10, '{"provider":"openrouter","artifact":"asset-video-launch-storyboard"}'),
+  ('message-video-social-user', 'conversation-video-social', 'branch-video-social-main', 'user', 'Make short social variants for image, audio, and video generation features.', NULL, NULL, 0, 0, '{}'),
+  ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","artifact":"asset-video-social-variants"}');
 
-INSERT INTO workspace_assets (id, project_id, conversation_id, asset_type, storage_path, mime_type, size_bytes, metadata) VALUES
-  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 'mock://assets/demo.txt', 'text/plain', 128, '{"mock":true}'),
-  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 'mock://assets/image-studio/product-hero.png', 'image/png', 2048000, '{"prompt":"compact AI hardware device on a white desk"}'),
-  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 'mock://assets/image-studio/avatar-style-board.png', 'image/png', 1536000, '{"prompt":"engineering team avatar style exploration"}'),
-  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 'mock://assets/video-lab/launch-teaser-storyboard.json', 'application/json', 8192, '{"duration_seconds":10,"shots":3}'),
-  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 'mock://assets/video-lab/social-variants.mp4', 'video/mp4', 7340032, '{"variants":3,"aspect_ratio":"9:16"}');
+INSERT INTO user_workspace_assets (id, project_id, conversation_id, asset_type, storage_path, mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata) VALUES
+  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 'mock://assets/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
+  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 'mock://assets/image-studio/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
+  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 'mock://assets/image-studio/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
+  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 'mock://assets/video-lab/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
+  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 'mock://assets/video-lab/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}');
 
-INSERT INTO message_attachments (id, message_id, asset_id) VALUES
+INSERT INTO user_message_attachments (id, message_id, asset_id) VALUES
   ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');
 
-INSERT INTO file_extractions (id, asset_id, extracted_text, metadata) VALUES
+INSERT INTO user_file_extractions (id, asset_id, extracted_text, metadata) VALUES
   ('extraction-demo-text', 'asset-demo-text', 'This is mocked extracted text for local development.', '{}');
 
-INSERT INTO embedding_records (id, project_id, source_type, source_id, embedding_model, vector_ref, metadata) VALUES
+INSERT INTO user_embedding_records (id, project_id, source_type, source_id, embedding_model, vector_ref, metadata) VALUES
   ('embedding-demo-text', 'project-demo', 'asset', 'asset-demo-text', 'mock-embedding', 'mock://vectors/embedding-demo-text', '{}');
 
-INSERT INTO inference_requests (id, project_id, model_slug, model_profile_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
+INSERT INTO user_inference_requests (id, project_id, model_slug, model_profile_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
   ('inference-demo', 'project-demo', 'mock-chat', 'profile-mock-chat-default', 'mock-provider', 'succeeded', 12, 24, 1, 0, 1, '{"mock":true}');
 
-INSERT INTO provider_attempts (id, inference_request_id, provider_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
+INSERT INTO user_provider_attempts (id, inference_request_id, provider_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
   ('attempt-demo', 'inference-demo', 'provider-mock', 'succeeded', 42, 'mock-request-1', NULL, '{}');
 
-INSERT INTO usage_events (id, project_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) VALUES
-  ('usage-demo', 'project-demo', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 1, 0, '{"mock":true}');
+INSERT INTO user_usage_events (id, project_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) VALUES
+  ('usage-demo', 'project-demo', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 1, 0, '{"mock":true}'),
+  ('usage-image-product-main', 'project-image-studio', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-main"}'),
+  ('usage-image-product-dark', 'project-image-studio', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-dark"}'),
+  ('usage-image-avatar', 'project-image-studio', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-avatar"}'),
+  ('usage-video-launch', 'project-video-lab', NULL, 'google/veo-3.1-fast', 'openrouter', 'video_generation', 100, 10, '{"conversation_id":"conversation-video-launch"}'),
+  ('usage-video-social', 'project-video-lab', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"conversation_id":"conversation-video-social"}');
 
-INSERT INTO async_jobs (id, project_id, job_type, status, model_slug, provider_slug, metadata) VALUES
+INSERT INTO user_async_jobs (id, project_id, job_type, status, model_slug, provider_slug, metadata) VALUES
   ('job-demo-image', 'project-demo', 'image_generation', 'completed', 'mock-creative', 'mock-provider', '{"mock":true}');
 
-INSERT INTO routing_policies (id, project_id, name, policy_data, status) VALUES
+INSERT INTO user_routing_policies (id, project_id, name, policy_data, status) VALUES
   ('routing-demo-default', 'project-demo', 'Default dev routing', '{"mode":"fixed","provider":"mock-provider"}', 'active');
 
-INSERT INTO budget_policies (id, project_id, name, limit_credits, period, status) VALUES
+INSERT INTO user_budget_policies (id, project_id, name, limit_credits, period, status) VALUES
   ('budget-demo-monthly', 'project-demo', 'Monthly dev budget', 100000, 'month', 'active');
 
-INSERT INTO webhook_endpoints (id, project_id, url, secret_ref, status) VALUES
+INSERT INTO user_webhook_endpoints (id, project_id, url, secret_ref, status) VALUES
   ('webhook-demo', 'project-demo', 'https://example.com/webhooks/model-market', 'WEBHOOK_DEMO_SECRET', 'inactive');
 
-INSERT INTO audit_logs (id, actor_user_id, organization_id, action, target_type, target_id, metadata) VALUES
+INSERT INTO sys_audit_logs (id, actor_user_id, organization_id, action, target_type, target_id, metadata) VALUES
   ('audit-demo-seed', 'user-admin', 'org-demo', 'seed.loaded', 'project', 'project-demo', '{"source":"populate_test_data.sql"}');
 
-INSERT INTO provider_settlements (id, provider_id, period_start, period_end, amount_cents, currency, status, metadata) VALUES
+INSERT INTO sys_provider_settlements (id, provider_id, period_start, period_end, amount_cents, currency, status, metadata) VALUES
   ('settlement-mock-june', 'provider-mock', '2026-06-01 00:00:00', '2026-06-30 23:59:59', 0, 'USD', 'draft', '{"mock":true}');

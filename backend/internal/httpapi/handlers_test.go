@@ -173,10 +173,10 @@ func TestSignup(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 
-	mock.ExpectExec("insert into users").
+	mock.ExpectExec("insert into sys_users").
 		WithArgs(sqlmock.AnyArg(), "new@example.com", "New User").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into memberships").
+	mock.ExpectExec("insert into sys_memberships").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
@@ -229,7 +229,7 @@ func TestCreateAPIKey(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 
-	mock.ExpectExec("insert into api_keys").
+	mock.ExpectExec("insert into user_api_keys").
 		WithArgs(sqlmock.AnyArg(), "project-1", "Test key", sqlmock.AnyArg(), sqlmock.AnyArg(), "models:read,chat:create").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -272,11 +272,11 @@ func TestChatCompletions(t *testing.T) {
 	defer cleanup()
 
 	apiKey := "mk_test"
-	mock.ExpectQuery("select project_id from api_keys").
+	mock.ExpectQuery("select project_id from user_api_keys").
 		WithArgs(hashAPIKey(apiKey)).
 		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
-	mock.ExpectExec("insert into inference_requests").
-		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", 1, sqlmock.AnyArg()).
+	mock.ExpectExec("insert into user_inference_requests").
+		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))

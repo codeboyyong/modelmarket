@@ -39,13 +39,25 @@ func (a *App) ready(w http.ResponseWriter, r *http.Request) {
 func (a *App) devSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	counts := map[string]int64{}
-	for _, table := range []string{"users", "organizations", "projects", "providers", "models", "model_profiles", "wallets", "conversations", "messages", "usage_events"} {
+	summaryTables := map[string]string{
+		"users":          "sys_users",
+		"organizations":  "sys_organizations",
+		"projects":       "user_projects",
+		"providers":      "sys_providers",
+		"models":         "sys_models",
+		"model_profiles": "sys_model_profiles",
+		"wallets":        "user_wallets",
+		"conversations":  "user_conversations",
+		"messages":       "user_messages",
+		"usage_events":   "user_usage_events",
+	}
+	for key, table := range summaryTables {
 		var count int64
 		if err := a.DB.QueryRowContext(ctx, fmt.Sprintf("select count(*) from %s", table)).Scan(&count); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		counts[table] = count
+		counts[key] = count
 	}
 	writeJSON(w, http.StatusOK, response{"dev_mode": a.Config.DevMode, "counts": counts})
 }
@@ -164,8 +176,8 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	userID := "user_" + randomHex(8)
 	membershipID := "membership_" + randomHex(8)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into users(id, email, name, avatar_url, status)
-		values($1, $2, $3, null, 'active')`, userID, req.Email, req.Name)
+		insert into sys_users(id, email, name, avatar_url, status, ui_theme, language)
+		values($1, $2, $3, null, 'active', 'Light', 'EN')`, userID, req.Email, req.Name)
 	if err != nil {
 		if a.Config.DevMode {
 			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
@@ -175,7 +187,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = a.DB.ExecContext(r.Context(), `
-		insert into memberships(id, user_id, organization_id, role)
+		insert into sys_memberships(id, user_id, organization_id, role)
 		values($1, $2, 'org-demo', 'developer')`, membershipID, userID)
 	if err != nil {
 		if a.Config.DevMode {
@@ -201,7 +213,7 @@ func (a *App) loginByIdentity(ctx context.Context, identity string) (response, e
 	var email string
 	err := a.DB.QueryRowContext(ctx, `
 		select email
-		from users
+		from sys_users
 		where lower(email) = lower($1) or lower(name) = lower($1)
 		limit 1`, identity).Scan(&email)
 	if err != nil {
@@ -214,10 +226,10 @@ func (a *App) loginByEmail(ctx context.Context, email string) (response, error) 
 	var userID, orgID, projectID, name string
 	err := a.DB.QueryRowContext(ctx, `
 		select u.id, u.name, o.id, p.id
-		from users u
-		join memberships m on m.user_id = u.id
-		join organizations o on o.id = m.organization_id
-		join projects p on p.organization_id = o.id
+		from sys_users u
+		join sys_memberships m on m.user_id = u.id
+		join sys_organizations o on o.id = m.organization_id
+		join user_projects p on p.organization_id = o.id
 		where u.email = $1
 		order by p.created_at asc
 		limit 1`, email).Scan(&userID, &name, &orgID, &projectID)
@@ -252,9 +264,9 @@ func devAuthResponse(email, name string) response {
 func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, '')
-		from models m
-		join providers p on p.id = m.provider_id
-		left join model_profiles mp on mp.model_id = m.id and mp.status = 'public'
+		from sys_models m
+		join sys_providers p on p.id = m.provider_id
+		left join sys_model_profiles mp on mp.model_id = m.id and mp.status = 'public'
 		order by p.name, m.name`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -279,10 +291,10 @@ func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 			pr.input_token_price, pr.input_token_price_unit,
 			pr.output_token_price, pr.output_token_price_unit,
 			pr.currency
-		from price_rules pr
-		join models m on m.id = pr.model_id
-		join providers p on p.id = m.provider_id
-		left join model_profiles mp on mp.id = pr.model_profile_id
+		from sys_price_rules pr
+		join sys_models m on m.id = pr.model_id
+		join sys_providers p on p.id = m.provider_id
+		left join sys_model_profiles mp on mp.id = pr.model_profile_id
 		order by p.name, m.modality, m.name`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -316,10 +328,15 @@ func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0)
-		from projects p
-		join organizations o on o.id = p.organization_id
-		left join wallets w on w.project_id = p.id
+		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
+		from user_projects p
+		join sys_organizations o on o.id = p.organization_id
+		left join user_wallets w on w.project_id = p.id
+		left join (
+			select project_id, sum(customer_charge) as credits_used
+			from user_usage_events
+			group by project_id
+		) u on u.project_id = p.id
 		order by p.created_at asc`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -329,12 +346,12 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	items := []response{}
 	for rows.Next() {
 		var id, name, org string
-		var paid, promo int64
-		if err := rows.Scan(&id, &name, &org, &paid, &promo); err != nil {
+		var paid, promo, creditsUsed int64
+		if err := rows.Scan(&id, &name, &org, &paid, &promo, &creditsUsed); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "name": name, "organization": org, "paid_credits": paid, "promotional_credits": promo})
+		items = append(items, response{"id": id, "name": name, "organization": org, "paid_credits": paid, "promotional_credits": promo, "credits_used": creditsUsed})
 	}
 	writeJSON(w, http.StatusOK, response{"projects": items})
 }
@@ -355,16 +372,16 @@ func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
 	id := "project_" + randomHex(8)
 	slug := slugify(name) + "-" + randomHex(3)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into projects(id, organization_id, name, slug, environment, retention_policy)
+		insert into user_projects(id, organization_id, name, slug, environment, retention_policy)
 		values($1, 'org-demo', $2, $3, 'dev', '{"conversation_days":30,"asset_days":30}')`, id, name, slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
 	_, _ = a.DB.ExecContext(r.Context(), `
-		insert into wallets(id, project_id, paid_credits, promotional_credits)
+		insert into user_wallets(id, project_id, paid_credits, promotional_credits)
 		values($1, $2, 0, 1000)`, "wallet_"+randomHex(8), id)
-	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization": "Demo Organization", "paid_credits": 0, "promotional_credits": 1000}})
+	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization": "Demo Organization", "paid_credits": 0, "promotional_credits": 1000, "credits_used": 0}})
 }
 
 func (a *App) conversations(w http.ResponseWriter, r *http.Request) {
@@ -375,8 +392,8 @@ func (a *App) conversations(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select c.id, c.title, c.status, c.created_at, c.updated_at, count(m.id)
-		from conversations c
-		left join messages m on m.conversation_id = c.id
+		from user_conversations c
+		left join user_messages m on m.conversation_id = c.id
 		where c.project_id = $1
 		group by c.id, c.title, c.status, c.created_at, c.updated_at
 		order by c.updated_at desc`, projectID)
@@ -414,16 +431,178 @@ func (a *App) createConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "conversation_" + randomHex(8)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into conversations(id, project_id, title, status)
+		insert into user_conversations(id, project_id, title, status)
 		values($1, $2, $3, 'active')`, id, req.ProjectID, title)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	branchID := "branch_" + randomHex(8)
 	_, _ = a.DB.ExecContext(r.Context(), `
-		insert into conversation_branches(id, conversation_id, parent_branch_id, name)
-		values($1, $2, null, 'Main')`, "branch_"+randomHex(8), id)
-	writeJSON(w, http.StatusCreated, response{"conversation": response{"id": id, "title": title, "status": "active", "message_count": 0}})
+		insert into user_conversation_branches(id, conversation_id, parent_branch_id, name)
+		values($1, $2, null, 'Main')`, branchID, id)
+	writeJSON(w, http.StatusCreated, response{"conversation": response{"id": id, "title": title, "status": "active", "message_count": 0}, "branch_id": branchID})
+}
+
+func (a *App) conversationBranches(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.URL.Query().Get("conversation_id")
+	if conversationID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_conversation_id"})
+		return
+	}
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select b.id, b.conversation_id, coalesce(b.parent_branch_id, ''), b.name, b.created_at, count(m.id)
+		from user_conversation_branches b
+		left join user_messages m on m.branch_id = b.id
+		where b.conversation_id = $1
+		group by b.id, b.conversation_id, b.parent_branch_id, b.name, b.created_at
+		order by case when b.parent_branch_id is null then 0 else 1 end, b.created_at asc, b.name asc, b.id asc`, conversationID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, branchConversationID, parentBranchID, name string
+		var createdAt time.Time
+		var messageCount int64
+		if err := rows.Scan(&id, &branchConversationID, &parentBranchID, &name, &createdAt, &messageCount); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "conversation_id": branchConversationID, "parent_branch_id": parentBranchID, "name": name, "created_at": createdAt, "message_count": messageCount})
+	}
+	writeJSON(w, http.StatusOK, response{"branches": items})
+}
+
+func (a *App) createConversationBranch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConversationID  string `json:"conversation_id"`
+		SourceMessageID string `json:"source_message_id"`
+		Name            string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ConversationID == "" || req.SourceMessageID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_branch_request"})
+		return
+	}
+
+	var sourceBranchID sql.NullString
+	var sourceCreatedAt time.Time
+	var sourceRole, sourceID string
+	err := a.DB.QueryRowContext(r.Context(), `
+		select branch_id, created_at, role, id
+		from user_messages
+		where id = $1 and conversation_id = $2`, req.SourceMessageID, req.ConversationID).Scan(&sourceBranchID, &sourceCreatedAt, &sourceRole, &sourceID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, response{"error": "source_message_not_found"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "Branch from " + sourceCreatedAt.Format("Jan 2 15:04")
+	}
+	branchID := "branch_" + randomHex(8)
+	_, err = a.DB.ExecContext(r.Context(), `
+		insert into user_conversation_branches(id, conversation_id, parent_branch_id, name)
+		values($1, $2, $3, $4)`, branchID, req.ConversationID, nullableString(sourceBranchID), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+
+	sourceRank := messageRoleRank(sourceRole)
+	whereBranch := "branch_id is null"
+	args := []any{req.ConversationID, sourceCreatedAt, sourceRank, req.SourceMessageID}
+	if sourceBranchID.Valid {
+		whereBranch = "branch_id = $5"
+		args = append(args, sourceBranchID.String)
+	}
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, created_at
+		from user_messages
+		where conversation_id = $1
+			and `+whereBranch+`
+			and (
+				created_at < $2
+				or (created_at = $2 and case role when 'user' then 0 when 'assistant' then 1 else 2 end < $3)
+				or (created_at = $2 and case role when 'user' then 0 when 'assistant' then 1 else 2 end = $3 and id <= $4)
+			)
+		order by created_at asc, case role when 'user' then 0 when 'assistant' then 1 else 2 end, id asc`, args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type copiedMessage struct {
+		role, content, metadata string
+		modelProfileID          sql.NullString
+		inferenceRequestID      sql.NullString
+		customerCharge          int64
+		providerCost            int64
+		createdAt               time.Time
+	}
+	copies := []copiedMessage{}
+	for rows.Next() {
+		var msg copiedMessage
+		if err := rows.Scan(&msg.role, &msg.content, &msg.modelProfileID, &msg.inferenceRequestID, &msg.customerCharge, &msg.providerCost, &msg.metadata, &msg.createdAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		copies = append(copies, msg)
+	}
+	for _, msg := range copies {
+		_, err = a.DB.ExecContext(r.Context(), `
+			insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, created_at)
+			values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			"message_"+randomHex(12), req.ConversationID, branchID, msg.role, msg.content, nullableString(msg.modelProfileID), nullableString(msg.inferenceRequestID), msg.customerCharge, msg.providerCost, msg.metadata, msg.createdAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+	}
+	_, _ = a.DB.ExecContext(r.Context(), `update user_conversations set updated_at = current_timestamp where id = $1`, req.ConversationID)
+	writeJSON(w, http.StatusCreated, response{"branch": response{"id": branchID, "conversation_id": req.ConversationID, "parent_branch_id": sourceBranchID.String, "name": name, "message_count": len(copies)}})
+}
+
+func (a *App) messages(w http.ResponseWriter, r *http.Request) {
+	conversationID := r.URL.Query().Get("conversation_id")
+	if conversationID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_conversation_id"})
+		return
+	}
+	branchID := r.URL.Query().Get("branch_id")
+	whereBranch := ""
+	args := []any{conversationID}
+	if branchID != "" {
+		whereBranch = " and branch_id = $2"
+		args = append(args, branchID)
+	}
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select id, role, content, coalesce(model_profile_id, ''), coalesce(branch_id, ''),
+			coalesce(inference_request_id, ''), customer_charge, provider_cost, metadata, created_at
+		from user_messages
+		where conversation_id = $1
+		`+whereBranch+`
+		order by created_at asc, case role when 'user' then 0 when 'assistant' then 1 else 2 end, id asc`, args...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, role, content, modelProfileID, messageBranchID, inferenceRequestID, metadata string
+		var customerCharge, providerCost int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &role, &content, &modelProfileID, &messageBranchID, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "role": role, "content": content, "model_profile_id": modelProfileID, "branch_id": messageBranchID, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
+	}
+	writeJSON(w, http.StatusOK, response{"messages": items})
 }
 
 func (a *App) assets(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +613,7 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select id, coalesce(conversation_id, ''), asset_type, storage_path, coalesce(mime_type, ''), coalesce(size_bytes, 0), metadata, created_at
-		from workspace_assets
+		from user_workspace_assets
 		where project_id = $1
 		order by created_at desc`, projectID)
 	if err != nil {
@@ -460,7 +639,7 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select id, name, prefix, status, created_at, revoked_at
-		from api_keys
+		from user_api_keys
 		where project_id = $1
 		order by created_at desc`, projectID)
 	if err != nil {
@@ -503,7 +682,7 @@ func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	hash := hashAPIKey(raw)
 	id := "key_" + randomHex(12)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into api_keys(id, project_id, name, prefix, key_hash, scopes, status)
+		insert into user_api_keys(id, project_id, name, prefix, key_hash, scopes, status)
 		values($1, $2, $3, $4, $5, $6, 'active')`, id, req.ProjectID, req.Name, prefix, hash, "models:read,chat:create")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -518,7 +697,7 @@ func (a *App) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_id"})
 		return
 	}
-	_, err := a.DB.ExecContext(r.Context(), `update api_keys set status = 'revoked', revoked_at = current_timestamp where id = $1`, id)
+	_, err := a.DB.ExecContext(r.Context(), `update user_api_keys set status = 'revoked', revoked_at = current_timestamp where id = $1`, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -533,8 +712,10 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Model    string `json:"model"`
-		Messages []struct {
+		Model          string `json:"model"`
+		ConversationID string `json:"conversation_id"`
+		BranchID       string `json:"branch_id"`
+		Messages       []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
@@ -548,12 +729,21 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		content = "Mock response to: " + req.Messages[len(req.Messages)-1].Content
 	}
 	requestID := "req_" + randomHex(12)
+	customerCharge := int64(1)
+	providerCost := int64(0)
 	_, err = a.DB.ExecContext(r.Context(), `
-		insert into inference_requests(id, project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
-		values($1, $2, $3, 'mock-provider', 'succeeded', $4, $5, 1, 0, 1)`, requestID, projectID, req.Model, len(req.Messages), len(content))
+		insert into user_inference_requests(id, project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
+		values($1, $2, $3, 'mock-provider', 'succeeded', $4, $5, $6, $7, $8)`, requestID, projectID, req.Model, len(req.Messages), len(content), customerCharge, providerCost, customerCharge-providerCost)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
+	}
+	if req.ConversationID != "" && len(req.Messages) > 0 {
+		last := req.Messages[len(req.Messages)-1]
+		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Content, content, customerCharge, providerCost); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, response{
 		"id":      requestID,
@@ -564,6 +754,40 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, model, prompt, answer string, customerCharge, providerCost int64) error {
+	var existing string
+	if err := a.DB.QueryRowContext(ctx, `select id from user_conversations where id = $1 and project_id = $2`, conversationID, projectID).Scan(&existing); err != nil {
+		return err
+	}
+	if branchID == "" {
+		if err := a.DB.QueryRowContext(ctx, `
+			select id
+			from user_conversation_branches
+			where conversation_id = $1
+			order by created_at asc, id asc
+			limit 1`, conversationID).Scan(&branchID); err != nil {
+			return err
+		}
+	} else {
+		var existingBranch string
+		if err := a.DB.QueryRowContext(ctx, `select id from user_conversation_branches where id = $1 and conversation_id = $2`, branchID, conversationID).Scan(&existingBranch); err != nil {
+			return err
+		}
+	}
+	userMessageID := "message_" + randomHex(12)
+	assistantMessageID := "message_" + randomHex(12)
+	_, err := a.DB.ExecContext(ctx, `
+		insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata)
+		values($1, $2, $3, 'user', $4, null, null, 0, 0, '{}'),
+			($5, $2, $3, 'assistant', $6, null, $7, $8, $9, $10)`,
+		userMessageID, conversationID, branchID, prompt, assistantMessageID, answer, inferenceRequestID, customerCharge, providerCost, fmt.Sprintf(`{"model":%q}`, model))
+	if err != nil {
+		return err
+	}
+	_, err = a.DB.ExecContext(ctx, `update user_conversations set updated_at = current_timestamp where id = $1`, conversationID)
+	return err
+}
+
 func (a *App) authenticateAPIKey(r *http.Request) (string, error) {
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
@@ -571,11 +795,28 @@ func (a *App) authenticateAPIKey(r *http.Request) (string, error) {
 	}
 	hash := hashAPIKey(strings.TrimPrefix(header, "Bearer "))
 	var projectID string
-	err := a.DB.QueryRowContext(r.Context(), `select project_id from api_keys where key_hash = $1 and status = 'active'`, hash).Scan(&projectID)
+	err := a.DB.QueryRowContext(r.Context(), `select project_id from user_api_keys where key_hash = $1 and status = 'active'`, hash).Scan(&projectID)
 	if err != nil {
 		return "", errors.New("invalid_api_key")
 	}
 	return projectID, nil
+}
+
+func nullableString(value sql.NullString) any {
+	if value.Valid {
+		return value.String
+	}
+	return nil
+}
+
+func messageRoleRank(role string) int {
+	if role == "user" {
+		return 0
+	}
+	if role == "assistant" {
+		return 1
+	}
+	return 2
 }
 
 func randomHex(bytesLen int) string {

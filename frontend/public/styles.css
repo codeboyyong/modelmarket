@@ -878,6 +878,33 @@ textarea {
   background: var(--chip);
 }
 
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 4px;
+  min-width: 210px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
+.context-menu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: var(--chip);
+}
+
 .composer {
   gap: 10px;
   margin-top: 12px;
@@ -929,6 +956,15 @@ pre {
 .workspace-picker {
   position: relative;
   margin-bottom: 18px;
+}
+
+.branch-select-wrap {
+  display: block;
+  margin-bottom: 18px;
+}
+
+.branch-select-wrap select {
+  padding-right: 34px;
 }
 
 .workspace-picker input {

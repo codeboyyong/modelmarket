@@ -89,6 +89,10 @@
         </section>
       </div>
 
+      <div class="context-menu hidden" id="messageContextMenu" role="menu" aria-label="Message actions">
+        <button id="branchFromMessage" type="button" role="menuitem">Start new branch from here</button>
+      </div>
+
       <section class="hero tab-panel active" id="home" data-panel="home">
         <div class="hero-copy">
           <p class="eyebrow">Unified AI model gateway</p>
@@ -251,6 +255,20 @@
               <span class="dropdown-arrow" aria-hidden="true">⌄</span>
             </span>
             <div id="conversations" class="workspace-dropdown hidden">Select a project first.</div>
+          </div>
+
+          <div class="branch-picker hidden" id="branchPicker">
+            <div class="workspace-section-head">
+            <h3>Branches</h3>
+            </div>
+            <label class="branch-select-wrap">
+              <span class="dropdown-field">
+                <select id="branchSelect" aria-label="Conversation branch">
+                  <option value="">Select a conversation first</option>
+                </select>
+                <span class="dropdown-arrow" aria-hidden="true">⌄</span>
+              </span>
+            </label>
           </div>
 
           <h3>Artifacts</h3>
