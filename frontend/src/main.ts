@@ -161,7 +161,7 @@ function renderProjects() {
 async function loadModels() {
   try {
     const data = await request<{ models: Model[] }>("/api/v1/models");
-    models = [...data.models, ...mockModels];
+    models = data.models;
   } catch {
     models = [...mockModels];
   }
