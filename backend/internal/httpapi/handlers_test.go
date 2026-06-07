@@ -122,6 +122,81 @@ func TestDevLogin(t *testing.T) {
 	}
 }
 
+func TestPasswordLogin(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select email").
+		WithArgs("admin@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow("admin@example.com"))
+	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+		WithArgs("admin@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-1", "Admin User", "org-1", "project-1"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin@example.com","password":"dev-password"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "project_id", "project-1")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDevSocialLogin(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+		WithArgs("developer@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-2", "Developer User", "org-1", "project-1"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/social/dev", bytes.NewBufferString(`{"provider":"facebook"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "provider", "facebook")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSignup(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectExec("insert into users").
+		WithArgs(sqlmock.AnyArg(), "new@example.com", "New User").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into memberships").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+		WithArgs("new@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-new", "New User", "org-1", "project-1"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewBufferString(`{"email":"new@example.com","name":"New User","password":"dev-password"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "project_id", "project-1")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestModels(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()

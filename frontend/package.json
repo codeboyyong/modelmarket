@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/build.mjs",
+    "build": "node scripts/build.mjs && tsc",
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "typecheck": "tsc --noEmit"

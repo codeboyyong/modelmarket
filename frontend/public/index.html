@@ -7,82 +7,250 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="mark">MM</span>
-          <div>
-            <strong>Model Market</strong>
-            <small>Phase 1 foundation</small>
+    <main class="site-shell">
+      <header class="nav-bar">
+        <a class="brand" href="#home" aria-label="Model Market home">
+          <span class="brand-mark">MM</span>
+          <span>Model Market</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary navigation">
+          <button class="tab-link" type="button" data-tab="models">Models</button>
+          <button class="tab-link" type="button" data-tab="workbench">Workbench</button>
+          <button class="tab-link" type="button" data-tab="pricing">Pricing</button>
+          <a class="nav-link" href="#resources">Documentations</a>
+        </nav>
+        <div class="nav-actions">
+          <div class="account-menu">
+            <button class="ghost login-button" id="loginButton" type="button" aria-haspopup="menu" aria-expanded="false">Login</button>
+            <div class="account-dropdown hidden" id="accountMenu" role="menu" aria-label="Account menu">
+              <button type="button" role="menuitem" data-account-action="settings">Settings</button>
+              <button type="button" role="menuitem" data-account-action="profile">User Profile</button>
+              <button type="button" role="menuitem" data-account-action="billing">Billing</button>
+              <button type="button" role="menuitem" data-account-action="buy-credit">Buy Credit</button>
+              <button type="button" role="menuitem" data-account-action="credit-usage">Credit Usage</button>
+              <button type="button" role="menuitem" data-account-action="logout">Logout</button>
+            </div>
+          </div>
+          <label class="compact-control" for="languageSelect" title="Language">
+            <span class="control-icon" aria-hidden="true">文</span>
+            <select id="languageSelect" aria-label="Language">
+              <option value="en">EN</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <label class="compact-control" for="themeMode" title="Theme">
+            <span class="control-icon" id="themeIcon" aria-hidden="true">◐</span>
+            <select id="themeMode" aria-label="Theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+        </div>
+      </header>
+
+      <div class="modal-backdrop hidden" id="loginModal" role="presentation">
+        <section class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow" id="loginModeLabel">Account</p>
+              <h2 id="loginTitle">Log in to Model Market</h2>
+            </div>
+            <button class="icon-button" id="closeLogin" type="button" aria-label="Close login dialog">×</button>
+          </div>
+
+          <form class="auth-form" id="loginForm">
+            <label id="nameField" class="hidden">
+              Name
+              <input id="authName" type="text" autocomplete="name" placeholder="Your name" />
+            </label>
+            <label>
+              Email or username
+              <input id="authUsername" type="text" autocomplete="email" placeholder="admin@example.com" />
+            </label>
+            <label>
+              Password
+              <input id="authPassword" type="password" autocomplete="current-password" placeholder="Any dev password" />
+            </label>
+            <button id="authSubmit" type="submit">Login</button>
+          </form>
+
+          <div class="social-login" aria-label="Social login">
+            <button class="ghost social-button" type="button" data-provider="google">Google</button>
+            <button class="ghost social-button" type="button" data-provider="github">GitHub</button>
+            <button class="ghost social-button" type="button" data-provider="facebook">Facebook</button>
+          </div>
+
+          <p class="auth-switch">
+            <span id="authSwitchText">No account yet?</span>
+            <button id="toggleSignup" type="button">Sign up</button>
+          </p>
+          <p class="auth-message" id="authMessage" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <section class="hero tab-panel active" id="home" data-panel="home">
+        <div class="hero-copy">
+          <p class="eyebrow">Unified AI model gateway</p>
+          <h1>One API for image, audio, and video AI workflows.</h1>
+          <p class="hero-text">
+            Browse providers, compare model capabilities, route requests through a workbench, and manage credits from one developer console.
+          </p>
+          <div class="hero-actions">
+            <button class="button-link" type="button" data-tab="models">Explore Models</button>
+            <button class="secondary-link" type="button" data-tab="api">View API Console</button>
+          </div>
+          <div class="stats-strip" id="summary">
+            <span>Loading platform stats...</span>
           </div>
         </div>
-        <nav>
-          <a href="#dashboard">Dashboard</a>
-          <a href="#catalog">Catalog</a>
-          <a href="#workbench">Workbench</a>
-          <a href="#admin">Metadata</a>
-          <a href="#keys">API Keys</a>
-        </nav>
-      </aside>
-      <section class="content">
-        <header class="topbar">
-          <div>
-            <h1>Model Market Dev Console</h1>
-            <p>Local shell backed by Go, PostgreSQL, and repo-owned SQL test data.</p>
-          </div>
-          <button id="refresh">Refresh</button>
-        </header>
-
-        <section class="grid" id="dashboard">
-          <article>
-            <h2>System</h2>
-            <div id="summary" class="kv">Loading...</div>
-          </article>
-          <article>
-            <h2>Projects</h2>
-            <div id="projects" class="list">Loading...</div>
-          </article>
-        </section>
-
-        <section class="panel" id="catalog">
-          <h2>Model Catalog</h2>
-          <div id="models" class="cards">Loading...</div>
-        </section>
-
-        <section class="panel" id="workbench">
-          <h2>Workbench</h2>
-          <div class="workbench">
-            <label>
-              Model
-              <select id="modelSelect"></select>
-            </label>
-            <label>
-              Prompt
-              <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
-            </label>
-            <button id="sendPrompt">Send Mock Chat</button>
-            <pre id="chatResult">No response yet.</pre>
-          </div>
-        </section>
-
-        <section class="grid" id="admin">
-          <article>
-            <h2>Metadata Manager</h2>
-            <p class="muted">Phase 1 shell for models, providers, model profiles, pricing, routing, and dev metadata.</p>
-            <ul>
-              <li>Providers and models are loaded from <code>db/populate_test_data.sql</code>.</li>
-              <li>Model profiles include default system prompts and parameters.</li>
-              <li>Publish/rollback workflows land in Phase 2.</li>
-            </ul>
-          </article>
-          <article id="keys">
-            <h2>API Keys</h2>
-            <button id="createKey">Create Dev API Key</button>
-            <div id="newKey"></div>
-            <div id="apiKeys" class="list">Load a project first.</div>
-          </article>
-        </section>
       </section>
+
+      <section class="model-ticker tab-panel active" aria-label="Supported model families" data-panel="home">
+        <span>Mock Chat</span>
+        <span>Mock Creative</span>
+        <span>OpenAI Placeholder</span>
+        <span>Image Generation</span>
+        <span>Streaming</span>
+        <span>Async Jobs</span>
+      </section>
+
+      <section class="section-grid tab-panel" id="models" data-panel="models">
+        <div class="section-heading">
+          <p class="eyebrow">Model catalog</p>
+          <h2>Discover, compare, and launch models</h2>
+          <p>Live catalog data is loaded from the backend. Missing provider families are represented as mock cards for the Phase 1 UI.</p>
+        </div>
+        <div class="catalog-toolbar">
+          <div class="filter-panel">
+            <label>
+              Search
+              <input id="modelSearch" type="search" placeholder="Model, provider, modality" />
+            </label>
+            <div class="modality-tabs" role="tablist" aria-label="Filter models by modality">
+              <button class="filter-tab active" type="button" data-modality="all">All</button>
+              <button class="filter-tab" type="button" data-modality="image">Image</button>
+              <button class="filter-tab" type="button" data-modality="audio">Audio</button>
+              <button class="filter-tab" type="button" data-modality="video">Video</button>
+            </div>
+          </div>
+          <div class="filter-metrics" id="catalogMetrics">Loading...</div>
+        </div>
+        <div class="catalog-layout">
+          <div class="model-grid" id="modelsGrid">Loading models...</div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="api" data-panel="api">
+        <div class="section-heading">
+          <p class="eyebrow">API console</p>
+          <h2>Build against one gateway contract</h2>
+          <p>Use one OpenAI-compatible API surface while the backend handles model profiles, provider metadata, usage tracking, and credit charging.</p>
+        </div>
+        <div class="api-console">
+          <pre>{
+  "model": "mock-chat-default",
+  "messages": [
+    { "role": "user", "content": "Explain the platform" }
+  ]
+}</pre>
+          <div>
+            <h3>Current backend mapping</h3>
+            <p><code>POST /api/v1/chat/completions</code> is live for the mock chat provider. Image, video, audio, and file APIs are represented as mock UI components until backend adapters land.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="product-band tab-panel" data-panel="api">
+        <article>
+          <span class="icon-tile">API</span>
+          <h3>Unified API</h3>
+          <p>OpenAI-compatible request shape for model routing, usage tracking, and credit charging.</p>
+        </article>
+        <article>
+          <span class="icon-tile">SLS</span>
+          <h3>Serverless inference</h3>
+          <p>Mock provider execution now, with provider adapters and retry/fallback routing planned next.</p>
+        </article>
+        <article>
+          <span class="icon-tile">ADM</span>
+          <h3>Metadata manager</h3>
+          <p>Configure providers, model profiles, prompts, parameters, pricing, and policy metadata.</p>
+        </article>
+      </section>
+
+      <section class="workbench-section tab-panel" id="workbench" data-panel="workbench">
+        <div class="chat-panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">Workbench</p>
+              <h2>Test a model profile</h2>
+            </div>
+            <select id="modelSelect" aria-label="Select model"></select>
+          </div>
+          <div class="chat-window" id="chatTranscript">
+            <div class="message user">Explain what this platform does in one sentence.</div>
+            <div class="message assistant">Select a model and send a prompt to call the backend mock chat API.</div>
+          </div>
+          <div class="composer">
+            <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
+            <button id="sendPrompt" type="button">Send</button>
+          </div>
+          <pre id="chatResult">No response yet.</pre>
+        </div>
+
+        <aside class="console-panel">
+          <h3>Project wallet</h3>
+          <div id="projects" class="stack-list">Loading projects...</div>
+          <h3>API keys</h3>
+          <button id="createKey" type="button">Create Dev API Key</button>
+          <div id="newKey"></div>
+          <div id="apiKeys" class="stack-list">Load a project first.</div>
+        </aside>
+      </section>
+
+      <section class="admin-pricing tab-panel" id="admin" data-panel="admin">
+        <article class="admin-panel">
+          <p class="eyebrow">Admin</p>
+          <h2>Admin dashboard</h2>
+          <p>Manage marketplace setup, users, model metadata, pricing, and provider status from this internal workspace.</p>
+          <div class="admin-summary">
+            <div>
+              <strong id="adminUserName">Admin User</strong>
+              <small>Signed in administrator</small>
+            </div>
+            <div>
+              <strong>Dev</strong>
+              <small>Environment</small>
+            </div>
+            <div>
+              <strong>Active</strong>
+              <small>Platform status</small>
+            </div>
+          </div>
+          <div id="metadataRows" class="admin-table">Loading metadata...</div>
+        </article>
+      </section>
+
+      <section class="admin-pricing tab-panel" id="pricing" data-panel="pricing">
+        <article class="admin-panel">
+          <p class="eyebrow">Pricing</p>
+          <h2>Credit pricing mock</h2>
+          <div id="pricingRows" class="pricing-table">Loading pricing...</div>
+        </article>
+      </section>
+
+      <footer class="site-footer" id="resources">
+        <div>
+          <strong>Model Market</strong>
+          <span>Unified model catalog, gateway, and workbench.</span>
+        </div>
+        <nav aria-label="Footer navigation">
+          <a id="about" href="#about">About</a>
+          <a href="#resources">Resources</a>
+          <a id="contact" href="#contact">Contact</a>
+        </nav>
+      </footer>
     </main>
     <script type="module" src="/assets/main.js"></script>
   </body>

@@ -61,8 +61,158 @@ func (a *App) devLogin(w http.ResponseWriter, r *http.Request) {
 	if req.Email == "" {
 		req.Email = "admin@example.com"
 	}
+	login, err := a.loginByEmail(r.Context(), req.Email)
+	if err != nil {
+		if a.Config.DevMode {
+			writeJSON(w, http.StatusOK, devAuthResponse(req.Email, "Admin User"))
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, response{"error": "dev_user_not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, login)
+}
+
+func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credentials"})
+		return
+	}
+	login, err := a.loginByIdentity(r.Context(), req.Username)
+	if err != nil {
+		if a.Config.DevMode {
+			email := req.Username
+			name := strings.Split(req.Username, "@")[0]
+			if !strings.Contains(email, "@") {
+				email = "admin@example.com"
+				name = req.Username
+			}
+			writeJSON(w, http.StatusOK, devAuthResponse(email, name))
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
+		return
+	}
+	writeJSON(w, http.StatusOK, login)
+}
+
+func (a *App) devSocialLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	if provider != "google" && provider != "github" && provider != "facebook" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "unsupported_provider"})
+		return
+	}
+	email := map[string]string{
+		"google":   "admin@example.com",
+		"github":   "admin@example.com",
+		"facebook": "developer@example.com",
+	}[provider]
+	login, err := a.loginByEmail(r.Context(), email)
+	if err != nil {
+		if a.Config.DevMode {
+			login = devAuthResponse(email, map[string]string{
+				"google":   "Admin User",
+				"github":   "Admin User",
+				"facebook": "Developer User",
+			}[provider])
+			login["provider"] = provider
+			writeJSON(w, http.StatusOK, login)
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, response{"error": "dev_user_not_found"})
+		return
+	}
+	login["provider"] = provider
+	writeJSON(w, http.StatusOK, login)
+}
+
+func (a *App) signup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Name     string `json:"name"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_signup_fields"})
+		return
+	}
+	if req.Name == "" {
+		req.Name = strings.Split(req.Email, "@")[0]
+	}
+	userID := "user_" + randomHex(8)
+	membershipID := "membership_" + randomHex(8)
+	_, err := a.DB.ExecContext(r.Context(), `
+		insert into users(id, email, name, avatar_url, status)
+		values($1, $2, $3, null, 'active')`, userID, req.Email, req.Name)
+	if err != nil {
+		if a.Config.DevMode {
+			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
+			return
+		}
+		writeJSON(w, http.StatusConflict, response{"error": "user_exists_or_invalid"})
+		return
+	}
+	_, err = a.DB.ExecContext(r.Context(), `
+		insert into memberships(id, user_id, organization_id, role)
+		values($1, $2, 'org-demo', 'developer')`, membershipID, userID)
+	if err != nil {
+		if a.Config.DevMode {
+			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	login, err := a.loginByEmail(r.Context(), req.Email)
+	if err != nil {
+		if a.Config.DevMode {
+			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, login)
+}
+
+func (a *App) loginByIdentity(ctx context.Context, identity string) (response, error) {
+	var email string
+	err := a.DB.QueryRowContext(ctx, `
+		select email
+		from users
+		where lower(email) = lower($1) or lower(name) = lower($1)
+		limit 1`, identity).Scan(&email)
+	if err != nil {
+		return nil, err
+	}
+	return a.loginByEmail(ctx, email)
+}
+
+func (a *App) loginByEmail(ctx context.Context, email string) (response, error) {
 	var userID, orgID, projectID, name string
-	err := a.DB.QueryRowContext(r.Context(), `
+	err := a.DB.QueryRowContext(ctx, `
 		select u.id, u.name, o.id, p.id
 		from users u
 		join memberships m on m.user_id = u.id
@@ -70,16 +220,33 @@ func (a *App) devLogin(w http.ResponseWriter, r *http.Request) {
 		join projects p on p.organization_id = o.id
 		where u.email = $1
 		order by p.created_at asc
-		limit 1`, req.Email).Scan(&userID, &name, &orgID, &projectID)
+		limit 1`, email).Scan(&userID, &name, &orgID, &projectID)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, response{"error": "dev_user_not_found"})
-		return
+		return nil, err
 	}
-	writeJSON(w, http.StatusOK, response{
-		"user":            response{"id": userID, "email": req.Email, "name": name},
+	return response{
+		"user":            response{"id": userID, "email": email, "name": name},
 		"organization_id": orgID,
 		"project_id":      projectID,
-	})
+		"session":         response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"},
+	}, nil
+}
+
+func devAuthResponse(email, name string) response {
+	if strings.TrimSpace(name) == "" {
+		name = "Dev User"
+	}
+	userID := "user-dev-fallback"
+	if strings.EqualFold(email, "admin@example.com") {
+		userID = "user-admin"
+	}
+	return response{
+		"user":            response{"id": userID, "email": email, "name": name},
+		"organization_id": "org-demo",
+		"project_id":      "project-demo",
+		"session":         response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"},
+		"dev_fallback":    true,
+	}
 }
 
 func (a *App) models(w http.ResponseWriter, r *http.Request) {

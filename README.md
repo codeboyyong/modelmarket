@@ -341,3 +341,10 @@ Next phase:
 - real provider adapter
 - credit reservation/capture
 - persisted Workbench chat
+
+
+### Example web site
+
+* https://www.atlascloud.ai/
+* https://openrouter.ai/
+* https://siliconflow.cn/  

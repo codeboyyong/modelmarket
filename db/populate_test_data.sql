@@ -52,6 +52,7 @@ INSERT INTO users (id, email, name, avatar_url, status) VALUES
 
 INSERT INTO oauth_accounts (id, user_id, provider, provider_account_id, email, display_name) VALUES
   ('oauth-google-admin', 'user-admin', 'google', 'google-admin-dev', 'admin@example.com', 'Admin User'),
+  ('oauth-github-admin', 'user-admin', 'github', 'github-admin-dev', 'admin@example.com', 'Admin User'),
   ('oauth-facebook-dev', 'user-developer', 'facebook', 'facebook-dev-dev', 'developer@example.com', 'Developer User');
 
 INSERT INTO organizations (id, name, slug, status) VALUES
