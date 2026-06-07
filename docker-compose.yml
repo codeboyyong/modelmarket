@@ -1,3 +1,5 @@
+version: '3.8'
+# docker run -d --name local_postgres -e POSTGRES_DB=model_market -e POSTGRES_USER=model_market -e POSTGRES_PASSWORD=model_market -p 5432:5432 -v postgres-data:/var/lib/postgresql/data --health-cmd "pg_isready -U model_market -d model_market" --health-interval 5s --health-timeout 3s --health-retries 20 postgres:16-alpine
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,7 +16,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-
   # redis:
   #   image: redis:7-alpine
   #   profiles:
@@ -35,7 +36,7 @@ services:
       MM_APP_ENV: "dev"
       HTTP_ADDR: ":8080"
       MM_DB_DRIVER: "postgres"
-      MM_DB_HOST: "postgres"
+      MM_DB_HOST: "localhost"
       MM_DB_PORT: "5432"
       MM_DB_NAME: "model_market"
       MM_DB_USER: "model_market"

@@ -18,7 +18,6 @@ import (
 
 	"model-market/backend/internal/config"
 	"model-market/backend/internal/httpapi"
-	"model-market/backend/internal/seed"
 	"model-market/backend/internal/store"
 )
 
@@ -50,12 +49,6 @@ func main() {
 	if err := store.RunMigrations(ctx, db, cfg.MigrationsDir); err != nil {
 		logger.Error("migrations_failed", "error", err)
 		os.Exit(1)
-	}
-	if cfg.DevMode {
-		if err := seed.Load(ctx, db, cfg.MockDataDir, logger); err != nil {
-			logger.Error("seed_failed", "error", err)
-			os.Exit(1)
-		}
 	}
 
 	app := &httpapi.App{

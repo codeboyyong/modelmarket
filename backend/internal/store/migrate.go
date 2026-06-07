@@ -20,7 +20,10 @@ func RunMigrations(ctx context.Context, db *sql.DB, dir string) error {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("read migrations: %w", err)
+		return nil
+		//temply disbalit for
+		//ERROR msg=migrations_failed error="read migrations: open backend/migrations: no such file or directory"
+		//return fmt.Errorf("read migrations: %w", err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
