@@ -14,13 +14,14 @@ load_env_file() {
     . "$file"
     set +a
   else
-    echo "File $file does not exist, skipping."  
+    echo "File $file does not exist, skipping."
   fi
 }
 
 load_env_file ".env"
 load_env_file ".env.${MM_APP_ENV}"
-# load_env_file "deploy/env/${MM_APP_ENV}.env"
+load_env_file "deploy/env/${MM_APP_ENV}.env"
+load_env_file "config/env/${MM_APP_ENV}.env"
 
 export MM_DB_DRIVER="${MM_DB_DRIVER:-postgres}"
 export MM_DB_HOST="${MM_DB_HOST:-localhost}"
@@ -68,6 +69,34 @@ run_sql_file() {
     *)
       echo "MM_DB_DRIVER=$MM_DB_DRIVER is not supported by this script yet." >&2
       echo "The SQL files are intentionally generic, but execution adapters must be added per database driver." >&2
+      exit 1
+      ;;
+  esac
+}
+
+run_sql_command() {
+  sql_command="$1"
+  case "$MM_DB_DRIVER" in
+    postgres|postgresql|pgx)
+      if ! command -v psql >/dev/null 2>&1; then
+        echo "psql is required to run SQL commands for MM_DB_DRIVER=$MM_DB_DRIVER." >&2
+        exit 1
+      fi
+      database_url="${MM_DATABASE_URL:-}"
+      if [ -n "$database_url" ]; then
+        PGSSLMODE="$MM_DB_SSL_MODE" psql "$database_url" -v ON_ERROR_STOP=1 -c "$sql_command"
+      else
+        PGPASSWORD="$MM_DB_PASSWORD" PGSSLMODE="$MM_DB_SSL_MODE" psql \
+          -h "$MM_DB_HOST" \
+          -p "$MM_DB_PORT" \
+          -U "$MM_DB_USER" \
+          -d "$MM_DB_NAME" \
+          -v ON_ERROR_STOP=1 \
+          -c "$sql_command"
+      fi
+      ;;
+    *)
+      echo "MM_DB_DRIVER=$MM_DB_DRIVER is not supported by this script yet." >&2
       exit 1
       ;;
   esac

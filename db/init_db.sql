@@ -3,11 +3,6 @@
 -- functions, generated columns, or database-specific enum types.
 -- IDs are TEXT/VARCHAR values supplied by the application or seed data.
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version VARCHAR(255) PRIMARY KEY,
-  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(64) PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
@@ -182,10 +177,15 @@ CREATE TABLE IF NOT EXISTS price_rules (
   id VARCHAR(64) PRIMARY KEY,
   model_id VARCHAR(64),
   model_profile_id VARCHAR(64),
-  unit_type VARCHAR(64) NOT NULL,
-  customer_price_credits INTEGER NOT NULL,
-  provider_cost_credits INTEGER NOT NULL DEFAULT 0,
-  currency VARCHAR(32) NOT NULL DEFAULT 'CREDIT',
+  input_token_price NUMERIC(18,8) NOT NULL DEFAULT 0,
+  input_token_price_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
+  output_token_price NUMERIC(18,8) NOT NULL DEFAULT 0,
+  output_token_price_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
+  provider_input_token_cost NUMERIC(18,8) NOT NULL DEFAULT 0,
+  provider_input_token_cost_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
+  provider_output_token_cost NUMERIC(18,8) NOT NULL DEFAULT 0,
+  provider_output_token_cost_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
+  currency VARCHAR(16) NOT NULL DEFAULT 'CREDIT',
   effective_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   CONSTRAINT fk_price_rules_model FOREIGN KEY (model_id) REFERENCES models(id),

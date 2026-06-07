@@ -28,7 +28,7 @@
         <header class="topbar">
           <div>
             <h1>Model Market Dev Console</h1>
-            <p>Local shell backed by Go, PostgreSQL, Redis, and repo-owned mock data.</p>
+            <p>Local shell backed by Go, PostgreSQL, and repo-owned SQL test data.</p>
           </div>
           <button id="refresh">Refresh</button>
         </header>
@@ -68,9 +68,9 @@
         <section class="grid" id="admin">
           <article>
             <h2>Metadata Manager</h2>
-            <p class="muted">Phase 1 shell for models, providers, model profiles, pricing, routing, and mock metadata.</p>
+            <p class="muted">Phase 1 shell for models, providers, model profiles, pricing, routing, and dev metadata.</p>
             <ul>
-              <li>Providers and models are loaded from <code>mock-data/dev_seed.json</code>.</li>
+              <li>Providers and models are loaded from <code>db/populate_test_data.sql</code>.</li>
               <li>Model profiles include default system prompts and parameters.</li>
               <li>Publish/rollback workflows land in Phase 2.</li>
             </ul>

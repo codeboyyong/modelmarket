@@ -195,7 +195,7 @@ List tables:
 \dt
 ```
 
-Check seeded data:
+Check dev test data:
 
 ```sql
 select email, name from users;

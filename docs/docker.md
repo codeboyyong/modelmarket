@@ -154,8 +154,8 @@ They load config from `.env`, `.env.<environment>`, and `deploy/env/<environment
 
 Schema and test data SQL:
 
-- `backend/db/init_db.sql`
-- `backend/db/populate_test_data.sql`
+- `db/init_db.sql`
+- `db/populate_test_data.sql`
 
 ## Notes
 

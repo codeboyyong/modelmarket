@@ -18,7 +18,6 @@ import (
 
 	"model-market/backend/internal/config"
 	"model-market/backend/internal/httpapi"
-	"model-market/backend/internal/store"
 )
 
 func main() {
@@ -41,14 +40,6 @@ func main() {
 		redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 		defer redisClient.Close()
 		redisHealth = redisPinger{client: redisClient}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := store.RunMigrations(ctx, db, cfg.MigrationsDir); err != nil {
-		logger.Error("migrations_failed", "error", err)
-		os.Exit(1)
 	}
 
 	app := &httpapi.App{

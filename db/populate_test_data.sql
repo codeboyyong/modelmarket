@@ -100,9 +100,23 @@ INSERT INTO model_configurations (id, model_profile_id, version, config_data, st
 INSERT INTO pricing_plans (id, slug, name, status, metadata) VALUES
   ('plan-developer', 'developer', 'Developer', 'active', '{"default":true}');
 
-INSERT INTO price_rules (id, model_id, model_profile_id, unit_type, customer_price_credits, provider_cost_credits, currency, metadata) VALUES
-  ('price-mock-chat-request', 'model-mock-chat', 'profile-mock-chat-default', 'request', 1, 0, 'CREDIT', '{}'),
-  ('price-mock-creative-image', 'model-mock-creative', 'profile-mock-creative-default', 'image', 10, 0, 'CREDIT', '{}');
+INSERT INTO price_rules (
+  id,
+  model_id,
+  model_profile_id,
+  input_token_price,
+  input_token_price_unit,
+  output_token_price,
+  output_token_price_unit,
+  provider_input_token_cost,
+  provider_input_token_cost_unit,
+  provider_output_token_cost,
+  provider_output_token_cost_unit,
+  currency,
+  metadata
+) VALUES
+  ('price-mock-chat-request', 'model-mock-chat', 'profile-mock-chat-default', 0.001, '1k_tokens', 0.002, '1k_tokens', 0, '1k_tokens', 0, '1k_tokens', 'CREDIT', '{}'),
+  ('price-mock-creative-image', 'model-mock-creative', 'profile-mock-creative-default', 0, 'request', 10, 'image', 0, 'request', 0, 'image', 'CREDIT', '{}');
 
 INSERT INTO wallets (id, project_id, paid_credits, promotional_credits) VALUES
   ('wallet-demo', 'project-demo', 10000, 5000);

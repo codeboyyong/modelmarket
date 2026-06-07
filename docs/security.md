@@ -331,7 +331,7 @@ Implemented now:
 - QA/prod DB SSL defaults.
 - Generic SQL schema files.
 - Local dev test data.
-- Unit tests for config, handlers, seed reset, and migrations.
+- Unit tests for config and handlers.
 - No raw provider/payment/OAuth secrets required for dev.
 
 Not implemented yet:

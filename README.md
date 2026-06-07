@@ -6,9 +6,9 @@ The current implementation is a local developer scaffold:
 
 - Go backend API
 - Node.js + TypeScript frontend
-- PostgreSQL schema migrations
+- explicit PostgreSQL schema initialization script
 - optional Redis readiness hook for future cache/rate-limit/session work
-- repo-owned dev test/mock data
+- repo-owned SQL dev test data
 - Docker Compose stack
 - basic API key flow
 - mock chat completion endpoint
@@ -72,7 +72,12 @@ The app should be available at:
 - Backend health: http://localhost:8080/healthz
 - Backend readiness: http://localhost:8080/readyz
 
-The backend runs migrations and loads dev test data automatically when `DEV_MODE=true`.
+The backend does not create or mutate schema on startup. Initialize schema and load dev test data explicitly:
+
+```sh
+scripts/init_db.sh dev
+scripts/populate_test_data.sh dev
+```
 
 Redis is optional in Phase 1. The default Docker Compose stack runs with PostgreSQL only. To start Redis as well for future cache/rate-limit experiments:
 
@@ -114,7 +119,7 @@ Populate deterministic test data:
 scripts/populate_test_data.sh dev
 ```
 
-The first argument is the environment name and maps to `config/env/<env>.env`.
+The first argument is the environment name and maps to the matching env files.
 
 Examples:
 
@@ -124,8 +129,6 @@ scripts/populate_test_data.sh dev
 
 scripts/init_db.sh qa
 scripts/populate_test_data.sh qa
-
-scripts/init_db.sh prod
 ```
 
 By default the scripts use:
@@ -133,14 +136,7 @@ By default the scripts use:
 - `db/init_db.sql`
 - `db/populate_test_data.sql`
 
-You can pass a custom SQL file as the second argument:
-
-```sh
-scripts/init_db.sh dev db/init_db.sql
-scripts/populate_test_data.sh dev db/populate_test_data.sql
-```
-
-The test-data script clears existing dev test rows before inserting, so it can be rerun in a development database.
+For `dev`, `test`, and `local`, `scripts/init_db.sh` resets the schema before recreating it. The test-data script clears existing dev test rows before inserting, so it can be rerun in a development database.
 
 ## Manual Backend Run
 
@@ -167,8 +163,6 @@ Default backend config:
 - `REDIS_ENABLED=false`
 - `REDIS_ADDR=localhost:6379`
 - `DEV_MODE=true`
-- `MOCK_DATA_DIR=../mock-data`
-- `MIGRATIONS_DIR=backend/migrations`
 
 You can also set `MM_DATABASE_URL` directly. For qa/prod, use SSL, for example:
 
@@ -184,13 +178,13 @@ If `MM_DATABASE_URL` is not set, the backend builds a PostgreSQL connection stri
 The generic SQL schema is in:
 
 ```text
-backend/db/init_db.sql
+db/init_db.sql
 ```
 
 The test/dev data SQL is in:
 
 ```text
-backend/db/populate_test_data.sql
+db/populate_test_data.sql
 ```
 
 Initialize a database for an environment:
@@ -277,7 +271,7 @@ curl -X POST http://localhost:8080/api/v1/api-keys \
   -d '{"project_id":"PROJECT_ID","name":"Local dev key"}'
 ```
 
-Call mock chat with the seeded dev key:
+Call mock chat with the dev test data key:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/chat/completions \
@@ -299,7 +293,7 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 ```text
 backend/              Go backend API
 frontend/             Node.js + TypeScript frontend
-mock-data/            repo-owned dev test data
+db/                   generic SQL schema and dev test data
 scripts/              local dev/check/build helpers
 docs/                 developer documentation
 deploy/               future deployment assets
@@ -330,7 +324,7 @@ More details are in [docs/docker.md](docs/docker.md).
 Phase 1 is implemented:
 
 - runnable skeleton
-- migrations
+- schema init script
 - dev test data
 - frontend shell
 - backend health/readiness

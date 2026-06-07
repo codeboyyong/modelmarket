@@ -23,8 +23,6 @@ type Config struct {
 	RedisEnabled     bool
 	RedisAddr        string
 	DevMode          bool
-	MockDataDir      string
-	MigrationsDir    string
 	ObjectStorageDir string
 	LogLevelName     string
 	PublicURL        string
@@ -57,8 +55,6 @@ func Load() Config {
 		RedisEnabled:     envBool("REDIS_ENABLED", false),
 		RedisAddr:        env("REDIS_ADDR", "localhost:6379"),
 		DevMode:          envBool("DEV_MODE", true),
-		MockDataDir:      env("MOCK_DATA_DIR", "../mock-data"),
-		MigrationsDir:    env("MIGRATIONS_DIR", "backend/migrations"),
 		ObjectStorageDir: env("OBJECT_STORAGE_DIR", "tmp/storage"),
 		LogLevelName:     env("LOG_LEVEL", "info"),
 		PublicURL:        env("PUBLIC_URL", "http://localhost:3000"),
