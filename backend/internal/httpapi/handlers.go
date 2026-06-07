@@ -612,7 +612,10 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select id, coalesce(conversation_id, ''), asset_type, storage_path, coalesce(mime_type, ''), coalesce(size_bytes, 0), metadata, created_at
+		select id, coalesce(conversation_id, ''), asset_type, storage_path, storage_provider,
+			coalesce(bucket_name, ''), coalesce(object_key, ''), coalesce(download_url, ''),
+			coalesce(mime_type, ''), coalesce(size_bytes, 0), coalesce(inference_request_id, ''),
+			customer_charge, provider_cost, metadata, created_at
 		from user_workspace_assets
 		where project_id = $1
 		order by created_at desc`, projectID)
@@ -623,16 +626,88 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, conversationID, assetType, storagePath, mimeType, metadata string
-		var sizeBytes int64
+		var id, conversationID, assetType, storagePath, storageProvider, bucketName, objectKey, downloadURL, mimeType, inferenceRequestID, metadata string
+		var sizeBytes, customerCharge, providerCost int64
 		var createdAt time.Time
-		if err := rows.Scan(&id, &conversationID, &assetType, &storagePath, &mimeType, &sizeBytes, &metadata, &createdAt); err != nil {
+		if err := rows.Scan(&id, &conversationID, &assetType, &storagePath, &storageProvider, &bucketName, &objectKey, &downloadURL, &mimeType, &sizeBytes, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "conversation_id": conversationID, "asset_type": assetType, "storage_path": storagePath, "mime_type": mimeType, "size_bytes": sizeBytes, "metadata": metadata, "created_at": createdAt})
+		items = append(items, response{"id": id, "conversation_id": conversationID, "asset_type": assetType, "storage_path": storagePath, "storage_provider": storageProvider, "bucket_name": bucketName, "object_key": objectKey, "download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
 	}
 	writeJSON(w, http.StatusOK, response{"assets": items})
+}
+
+func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID      string `json:"project_id"`
+		ConversationID string `json:"conversation_id"`
+		BranchID       string `json:"branch_id"`
+		Filename       string `json:"filename"`
+		ContentType    string `json:"content_type"`
+		SizeBytes      int64  `json:"size_bytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" || req.Filename == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_upload_request"})
+		return
+	}
+	contentType := strings.TrimSpace(req.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	assetType := assetTypeForContentType(contentType)
+	if assetType == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "unsupported_upload_type"})
+		return
+	}
+	assetID := "asset_" + randomHex(12)
+	filename := sanitizeFilename(req.Filename)
+	if filename == "" {
+		filename = "upload.bin"
+	}
+	bucket := a.Config.AssetBucket
+	objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", req.ProjectID, "uploads", assetID, filename}, "/"), "/")
+	storagePath := "s3://" + bucket + "/" + objectKey
+	downloadURL := assetDownloadURL(a.Config.AssetPublicURL, bucket, objectKey)
+	uploadURL := downloadURL
+
+	_, err := a.DB.ExecContext(r.Context(), `
+		insert into user_workspace_assets(id, project_id, conversation_id, asset_type, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, metadata)
+		values($1, $2, nullif($3, ''), $4, $5, 's3', $6, $7, $8, $9, $10, $11)`,
+		assetID, req.ProjectID, req.ConversationID, assetType, storagePath, bucket, objectKey, downloadURL, contentType, req.SizeBytes, fmt.Sprintf(`{"filename":%q,"upload_mode":"presigned"}`, req.Filename))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+
+	messageID := ""
+	if req.ConversationID != "" {
+		messageID = "message_" + randomHex(12)
+		_, err = a.DB.ExecContext(r.Context(), `
+			insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata)
+			values($1, $2, nullif($3, ''), 'user', $4, null, null, 0, 0, $5)`,
+			messageID, req.ConversationID, req.BranchID, "Uploaded "+filename, fmt.Sprintf(`{"asset_id":%q,"filename":%q}`, assetID, req.Filename))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		_, err = a.DB.ExecContext(r.Context(), `insert into user_message_attachments(id, message_id, asset_id) values($1, $2, $3)`, "attachment_"+randomHex(12), messageID, assetID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		_, _ = a.DB.ExecContext(r.Context(), `update user_conversations set updated_at = current_timestamp where id = $1`, req.ConversationID)
+	}
+
+	writeJSON(w, http.StatusCreated, response{
+		"asset": response{
+			"id": assetID, "project_id": req.ProjectID, "conversation_id": req.ConversationID, "asset_type": assetType,
+			"storage_path": storagePath, "storage_provider": "s3", "bucket_name": bucket, "object_key": objectKey,
+			"download_url": downloadURL, "mime_type": contentType, "size_bytes": req.SizeBytes,
+		},
+		"message_id": messageID,
+		"upload":     response{"method": "PUT", "url": uploadURL},
+	})
 }
 
 func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
@@ -817,6 +892,43 @@ func messageRoleRank(role string) int {
 		return 1
 	}
 	return 2
+}
+
+func assetTypeForContentType(contentType string) string {
+	lower := strings.ToLower(contentType)
+	if strings.HasPrefix(lower, "image/") {
+		return "upload_image"
+	}
+	if strings.HasPrefix(lower, "audio/") {
+		return "upload_audio"
+	}
+	if strings.HasPrefix(lower, "video/") {
+		return "upload_video"
+	}
+	return ""
+}
+
+func sanitizeFilename(filename string) string {
+	filename = strings.TrimSpace(strings.ReplaceAll(filename, "\\", "/"))
+	if slash := strings.LastIndex(filename, "/"); slash >= 0 {
+		filename = filename[slash+1:]
+	}
+	var b strings.Builder
+	for _, ch := range filename {
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '.' || ch == '-' || ch == '_' {
+			b.WriteRune(ch)
+			continue
+		}
+		b.WriteByte('-')
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func assetDownloadURL(publicBaseURL, bucket, objectKey string) string {
+	if publicBaseURL != "" {
+		return publicBaseURL + "/" + objectKey
+	}
+	return "https://" + bucket + ".s3.amazonaws.com/" + objectKey
 }
 
 func randomHex(bytesLen int) string {

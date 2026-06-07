@@ -32,8 +32,23 @@ type WorkspaceAsset = {
   conversation_id: string;
   asset_type: string;
   storage_path: string;
+  storage_provider: string;
+  bucket_name: string;
+  object_key: string;
+  download_url: string;
   mime_type: string;
   size_bytes: number;
+  customer_charge: number;
+  provider_cost: number;
+};
+
+type UploadIntentResponse = {
+  asset: WorkspaceAsset;
+  message_id: string;
+  upload: {
+    method: string;
+    url: string;
+  };
 };
 
 type ConversationMessage = {
@@ -321,7 +336,7 @@ function renderWorkspaceLists() {
       .map((asset) => `<div class="workspace-row artifact-row">
         <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
-        <p>${escapeHTML(asset.storage_path)}</p>
+        <a class="artifact-link" href="${escapeHTML(asset.download_url || asset.storage_path)}" target="_blank" rel="noreferrer">${escapeHTML(asset.download_url || asset.storage_path)}</a>
       </div>`)
       .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
   renderSelectedConversation();
@@ -706,6 +721,24 @@ async function sendPrompt() {
   await loadWorkspace();
 }
 
+async function uploadAssetFile(file: File) {
+  if (!currentProjectID) throw new Error("Select or create a project first.");
+  const data = await request<UploadIntentResponse>("/api/v1/assets/upload-intent", {
+    method: "POST",
+    body: JSON.stringify({
+      project_id: currentProjectID,
+      conversation_id: currentConversationID,
+      branch_id: currentBranchID,
+      filename: file.name,
+      content_type: file.type,
+      size_bytes: file.size
+    })
+  });
+  appendMessage("user", `Uploaded ${file.name}`);
+  void data;
+  await loadWorkspace();
+}
+
 function appendMessage(role: "user" | "assistant", content: string) {
   const transcript = $("chatTranscript");
   transcript.insertAdjacentHTML("beforeend", `<div class="message ${role}">${escapeHTML(content)}</div>`);
@@ -1068,6 +1101,16 @@ $("chatTranscript").addEventListener("contextmenu", (event) => {
 });
 $("branchFromMessage").addEventListener("click", () => startBranchFromMessage().catch(showError));
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
+$("uploadAsset").addEventListener("click", () => {
+  ($("assetUploadInput") as HTMLInputElement).click();
+});
+$("assetUploadInput").addEventListener("change", (event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  uploadAssetFile(file).catch(showError);
+  input.value = "";
+});
 $("backToModels").addEventListener("click", () => setActiveTab("models"));
 $("modelsGrid").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-model-slug]");

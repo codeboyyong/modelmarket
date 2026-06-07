@@ -39,6 +39,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/conversation-branches", a.createConversationBranch)
 	mux.HandleFunc("GET /api/v1/messages", a.messages)
 	mux.HandleFunc("GET /api/v1/assets", a.assets)
+	mux.HandleFunc("POST /api/v1/assets/upload-intent", a.createUploadIntent)
 	mux.HandleFunc("GET /api/v1/api-keys", a.apiKeys)
 	mux.HandleFunc("POST /api/v1/api-keys", a.createAPIKey)
 	mux.HandleFunc("DELETE /api/v1/api-keys/", a.revokeAPIKey)

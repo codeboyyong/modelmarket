@@ -1,44 +1,44 @@
 -- Portable deterministic test data for Model Market.
 -- IDs are explicit so this file does not require database-specific UUID functions.
 
-DELETE FROM sys_provider_settlements;
-DELETE FROM sys_audit_logs;
-DELETE FROM user_webhook_endpoints;
-DELETE FROM user_budget_policies;
-DELETE FROM user_routing_policies;
-DELETE FROM user_async_jobs;
-DELETE FROM user_usage_events;
-DELETE FROM user_provider_attempts;
-DELETE FROM user_inference_requests;
-DELETE FROM user_embedding_records;
-DELETE FROM user_file_extractions;
-DELETE FROM user_message_attachments;
-DELETE FROM user_workspace_assets;
-DELETE FROM user_messages;
-DELETE FROM user_conversation_branches;
-DELETE FROM user_conversations;
-DELETE FROM sys_coupons;
-DELETE FROM user_invoices;
-DELETE FROM user_payments;
-DELETE FROM user_ledger_transactions;
-DELETE FROM user_wallets;
-DELETE FROM sys_price_rules;
-DELETE FROM sys_pricing_plans;
-DELETE FROM sys_model_configurations;
-DELETE FROM sys_model_profiles;
-DELETE FROM sys_model_versions;
-DELETE FROM sys_models;
-DELETE FROM sys_capabilities;
-DELETE FROM sys_provider_endpoints;
-DELETE FROM sys_providers;
-DELETE FROM user_api_keys;
-DELETE FROM user_projects;
-DELETE FROM sys_memberships;
-DELETE FROM sys_organizations;
-DELETE FROM sys_sessions;
-DELETE FROM sys_oauth_accounts;
-DELETE FROM sys_users;
-DELETE FROM sys_roles;
+-- DELETE FROM sys_provider_settlements;
+-- DELETE FROM sys_audit_logs;
+-- DELETE FROM user_webhook_endpoints;
+-- DELETE FROM user_budget_policies;
+-- DELETE FROM user_routing_policies;
+-- DELETE FROM user_async_jobs;
+-- DELETE FROM user_usage_events;
+-- DELETE FROM user_provider_attempts;
+-- DELETE FROM user_embedding_records;
+-- DELETE FROM user_file_extractions;
+-- DELETE FROM user_message_attachments;
+-- DELETE FROM user_workspace_assets;
+-- DELETE FROM user_messages;
+-- DELETE FROM user_inference_requests;
+-- DELETE FROM user_conversation_branches;
+-- DELETE FROM user_conversations;
+-- DELETE FROM sys_coupons;
+-- DELETE FROM user_invoices;
+-- DELETE FROM user_payments;
+-- DELETE FROM user_ledger_transactions;
+-- DELETE FROM user_wallets;
+-- DELETE FROM sys_price_rules;
+-- DELETE FROM sys_pricing_plans;
+-- DELETE FROM sys_model_configurations;
+-- DELETE FROM sys_model_profiles;
+-- DELETE FROM sys_model_versions;
+-- DELETE FROM sys_models;
+-- DELETE FROM sys_capabilities;
+-- DELETE FROM sys_provider_endpoints;
+-- DELETE FROM sys_providers;
+-- DELETE FROM user_api_keys;
+-- DELETE FROM user_projects;
+-- DELETE FROM sys_memberships;
+-- DELETE FROM sys_organizations;
+-- DELETE FROM sys_sessions;
+-- DELETE FROM sys_oauth_accounts;
+-- DELETE FROM sys_users;
+-- DELETE FROM sys_roles;
 
 INSERT INTO sys_roles (id, name, description) VALUES
   ('role-owner', 'owner', 'Organization owner'),
@@ -229,12 +229,15 @@ INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_
   ('message-video-social-user', 'conversation-video-social', 'branch-video-social-main', 'user', 'Make short social variants for image, audio, and video generation features.', NULL, NULL, 0, 0, '{}'),
   ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","artifact":"asset-video-social-variants"}');
 
-INSERT INTO user_workspace_assets (id, project_id, conversation_id, asset_type, storage_path, mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata) VALUES
-  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 'mock://assets/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
-  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 'mock://assets/image-studio/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
-  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 'mock://assets/image-studio/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
-  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 'mock://assets/video-lab/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
-  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 'mock://assets/video-lab/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}');
+INSERT INTO user_workspace_assets (
+  id, project_id, conversation_id, asset_type, storage_path, storage_provider, bucket_name, object_key, download_url,
+  mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata
+) VALUES
+  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 's3://model-market-dev-assets/demo-project/uploads/demo.txt', 's3', 'model-market-dev-assets', 'demo-project/uploads/demo.txt', 'https://model-market-dev-assets.s3.amazonaws.com/demo-project/uploads/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
+  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 's3://model-market-dev-assets/project-image-studio/generated/product-hero.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/product-hero.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
+  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 's3://model-market-dev-assets/project-image-studio/generated/avatar-style-board.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/avatar-style-board.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
+  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 's3://model-market-dev-assets/project-video-lab/generated/launch-teaser-storyboard.json', 's3', 'model-market-dev-assets', 'project-video-lab/generated/launch-teaser-storyboard.json', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
+  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 's3://model-market-dev-assets/project-video-lab/generated/social-variants.mp4', 's3', 'model-market-dev-assets', 'project-video-lab/generated/social-variants.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}');
 
 INSERT INTO user_message_attachments (id, message_id, asset_id) VALUES
   ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');

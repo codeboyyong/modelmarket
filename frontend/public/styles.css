@@ -910,7 +910,12 @@ textarea {
   margin-top: 12px;
 }
 
+.upload-button {
+  flex: 0 0 auto;
+}
+
 .composer textarea {
+  flex: 1 1 auto;
   min-height: 68px;
   resize: vertical;
 }
@@ -1045,6 +1050,13 @@ pre {
 
 .artifact-transfer-icon.uploaded {
   color: var(--warning);
+}
+
+.artifact-link {
+  overflow-wrap: anywhere;
+  color: var(--accent-2);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .admin-pricing {

@@ -24,6 +24,8 @@ type Config struct {
 	RedisAddr        string
 	DevMode          bool
 	ObjectStorageDir string
+	AssetBucket      string
+	AssetPublicURL   string
 	LogLevelName     string
 	PublicURL        string
 }
@@ -56,6 +58,8 @@ func Load() Config {
 		RedisAddr:        env("REDIS_ADDR", "localhost:6379"),
 		DevMode:          envBool("DEV_MODE", true),
 		ObjectStorageDir: env("OBJECT_STORAGE_DIR", "tmp/storage"),
+		AssetBucket:      env("MM_ASSET_BUCKET", "model-market-dev-assets"),
+		AssetPublicURL:   strings.TrimRight(env("MM_ASSET_PUBLIC_URL", ""), "/"),
 		LogLevelName:     env("LOG_LEVEL", "info"),
 		PublicURL:        env("PUBLIC_URL", "http://localhost:3000"),
 	}

@@ -226,6 +226,8 @@
             <div class="message assistant">Select a model and send a prompt to call the backend mock chat API.</div>
           </div>
           <div class="composer">
+            <button class="icon-button upload-button" id="uploadAsset" type="button" title="Upload image, audio, or video" aria-label="Upload image, audio, or video">↑</button>
+            <input id="assetUploadInput" class="hidden" type="file" accept="image/*,audio/*,video/*" />
             <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
             <button id="sendPrompt" type="button">Send</button>
           </div>
