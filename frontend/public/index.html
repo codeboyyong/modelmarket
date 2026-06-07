@@ -189,7 +189,7 @@
           <div class="panel-title">
             <div>
               <p class="eyebrow">Workbench</p>
-              <h2>Test a model profile</h2>
+              <!-- <h2>Test a model profile</h2> -->
             </div>
           </div>
           <div class="workbench-model-picker">
@@ -207,11 +207,14 @@
                 <button class="filter-tab" type="button" data-workbench-modality="video">Video</button>
               </div>
               <label>
-                Filter
-                <input id="workbenchModelFilter" type="search" placeholder="Model name or provider" />
+                Model
+                <span class="dropdown-field">
+                  <input id="workbenchModelFilter" type="text" placeholder="Search model name or provider" autocomplete="off" />
+                  <span class="dropdown-arrow" aria-hidden="true">⌄</span>
+                </span>
               </label>
             </div>
-            <div class="workbench-model-list" id="workbenchModelList" aria-label="Workbench model list">Loading models...</div>
+            <div class="workbench-model-list hidden" id="workbenchModelList" aria-label="Workbench model list">Loading models...</div>
             <select id="modelSelect" class="hidden" aria-label="Select model"></select>
           </div>
           <div class="chat-window" id="chatTranscript">
@@ -222,7 +225,7 @@
             <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
             <button id="sendPrompt" type="button">Send</button>
           </div>
-          <pre id="chatResult">No response yet.</pre>
+          <pre id="chatResult" class="hidden">No response yet.</pre>
         </div>
 
         <aside class="console-panel">
@@ -230,21 +233,28 @@
             <h3>Projects</h3>
             <button class="ghost mini-button" id="createProject" type="button">New</button>
           </div>
-          <div id="projects" class="stack-list">Loading projects...</div>
+          <div class="workspace-picker" id="projectPicker">
+            <span class="dropdown-field">
+              <input id="projectFilter" type="text" placeholder="Search projects" autocomplete="off" />
+              <span class="dropdown-arrow" aria-hidden="true">⌄</span>
+            </span>
+            <div id="projects" class="workspace-dropdown hidden">Loading projects...</div>
+          </div>
 
           <div class="workspace-section-head">
             <h3>Conversations</h3>
             <button class="ghost mini-button" id="createConversation" type="button">New</button>
           </div>
-          <div id="conversations" class="stack-list">Select a project first.</div>
+          <div class="workspace-picker" id="conversationPicker">
+            <span class="dropdown-field">
+              <input id="conversationFilter" type="text" placeholder="Search conversations" autocomplete="off" />
+              <span class="dropdown-arrow" aria-hidden="true">⌄</span>
+            </span>
+            <div id="conversations" class="workspace-dropdown hidden">Select a project first.</div>
+          </div>
 
           <h3>Artifacts</h3>
           <div id="artifacts" class="stack-list">Select a project first.</div>
-
-          <h3>API keys</h3>
-          <button id="createKey" type="button">Create Dev API Key</button>
-          <div id="newKey"></div>
-          <div id="apiKeys" class="stack-list">Load a project first.</div>
         </aside>
       </section>
 
@@ -272,10 +282,133 @@
       </section>
 
       <section class="admin-pricing tab-panel" id="pricing" data-panel="pricing">
-        <article class="admin-panel">
+        <article class="admin-panel pricing-main-panel">
           <p class="eyebrow">Pricing</p>
-          <h2>Credit pricing mock</h2>
-          <div id="pricingRows" class="pricing-table">Loading pricing...</div>
+          <h2>Model pricing</h2>
+          <div class="pricing-toolbar">
+            <label>
+              Filter
+              <input id="pricingSearch" type="search" placeholder="Provider or model" />
+            </label>
+            <div class="modality-tabs" role="tablist" aria-label="Filter pricing by model type">
+              <button class="filter-tab active" type="button" data-pricing-modality="all">All</button>
+              <button class="filter-tab" type="button" data-pricing-modality="image">Image</button>
+              <button class="filter-tab" type="button" data-pricing-modality="audio">Audio</button>
+              <button class="filter-tab" type="button" data-pricing-modality="video">Video</button>
+            </div>
+          </div>
+          <div class="pricing-table-wrap">
+            <table class="pricing-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Model</th>
+                  <th>Input price</th>
+                  <th>Output price</th>
+                </tr>
+              </thead>
+              <tbody id="pricingRows">
+                <tr><td colspan="4">Loading pricing...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <aside class="admin-panel credit-panel">
+          <div class="credit-panel-head">
+            <div>
+              <p class="eyebrow">Credits</p>
+              <h2>Balance</h2>
+            </div>
+            <label>
+              Range
+              <select id="creditRange">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last month</option>
+                <option value="90">Last 90 days</option>
+              </select>
+            </label>
+          </div>
+          <div class="credit-balance-card">
+            <span>Current credit</span>
+            <strong id="currentCreditBalance">0</strong>
+          </div>
+          <section class="chart-section" aria-label="Credit balance history">
+            <h3>Balance history</h3>
+            <div id="creditLineChart" class="line-chart" role="img" aria-label="Credit balance history chart"></div>
+          </section>
+          <section class="chart-section" aria-label="Credit usage by model type">
+            <h3>Usage by type</h3>
+            <div class="usage-chart-row">
+              <div id="creditPieChart" class="pie-chart" role="img" aria-label="Credit usage by type chart"></div>
+              <div id="creditUsageLegend" class="usage-legend"></div>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="static-page tab-panel" id="company" data-panel="company">
+        <article class="static-panel">
+          <p class="eyebrow">About</p>
+          <h1>Company</h1>
+          <p>Model Market is a demo AI model marketplace for browsing multimodal models, comparing pricing, and testing workflows from a single workbench.</p>
+          <div class="static-grid">
+            <section>
+              <h2>Mission</h2>
+              <p>Make it simple for teams to discover image, audio, and video models without rebuilding provider integrations for every project.</p>
+            </section>
+            <section>
+              <h2>Platform</h2>
+              <p>The product combines a model catalog, credit wallet, routing gateway, and project workspace for generated artifacts.</p>
+            </section>
+            <section>
+              <h2>Status</h2>
+              <p>This page is placeholder content for the demo and can be replaced with real company information later.</p>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section class="static-page tab-panel" id="privacy" data-panel="privacy">
+        <article class="static-panel">
+          <p class="eyebrow">Legal</p>
+          <h1>Privacy</h1>
+          <p>This demo privacy page explains how Model Market would describe data handling in a production product.</p>
+          <div class="static-grid">
+            <section>
+              <h2>Account data</h2>
+              <p>We store profile information needed to operate accounts, projects, billing, and platform access.</p>
+            </section>
+            <section>
+              <h2>Usage data</h2>
+              <p>We collect request metadata, credit usage, and artifact references to support usage reporting and account controls.</p>
+            </section>
+            <section>
+              <h2>Controls</h2>
+              <p>Production users should be able to review, export, and delete account data according to applicable policy.</p>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section class="static-page tab-panel" id="terms" data-panel="terms">
+        <article class="static-panel">
+          <p class="eyebrow">Legal</p>
+          <h1>Terms of Service</h1>
+          <p>These sample terms outline expected use of the Model Market demo platform.</p>
+          <div class="static-grid">
+            <section>
+              <h2>Use of service</h2>
+              <p>Users are responsible for prompts, uploaded files, generated artifacts, and compliance with provider policies.</p>
+            </section>
+            <section>
+              <h2>Credits</h2>
+              <p>Credits represent metered platform usage and may vary by provider, model type, and selected generation settings.</p>
+            </section>
+            <section>
+              <h2>Availability</h2>
+              <p>This demo content is provided as-is and should be replaced with reviewed legal terms before production use.</p>
+            </section>
+          </div>
         </article>
       </section>
 
@@ -285,9 +418,23 @@
           <span>Unified model catalog, gateway, and workbench.</span>
         </div>
         <nav aria-label="Footer navigation">
-          <a id="about" href="#about">About</a>
+          <div class="footer-menu">
+            <button class="footer-menu-trigger" id="about" type="button" data-footer-menu="about" aria-expanded="false">About</button>
+            <div class="footer-submenu" aria-label="About links" data-footer-submenu="about">
+              <a href="#company">Company</a>
+              <a href="#privacy">Privacy</a>
+              <a href="#terms">Term of Service</a>
+            </div>
+          </div>
           <a href="#resources">Resources</a>
-          <a id="contact" href="#contact">Contact</a>
+          <div class="footer-menu">
+            <button class="footer-menu-trigger" id="contact" type="button" data-footer-menu="contact" aria-expanded="false">Contact</button>
+            <div class="footer-submenu" aria-label="Contact links" data-footer-submenu="contact">
+              <a href="mailto:hello@modelmarket.dev">Email</a>
+              <a href="https://www.youtube.com/" target="_blank" rel="noreferrer">Youtube</a>
+              <a href="https://x.com/" target="_blank" rel="noreferrer">X</a>
+            </div>
+          </div>
         </nav>
       </footer>
     </main>

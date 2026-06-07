@@ -273,6 +273,47 @@ func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"models": items})
 }
 
+func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select p.name, m.name, m.slug, m.modality, coalesce(mp.name, ''), coalesce(mp.slug, ''),
+			pr.input_token_price, pr.input_token_price_unit,
+			pr.output_token_price, pr.output_token_price_unit,
+			pr.currency
+		from price_rules pr
+		join models m on m.id = pr.model_id
+		join providers p on p.id = m.provider_id
+		left join model_profiles mp on mp.id = pr.model_profile_id
+		order by p.name, m.modality, m.name`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var provider, modelName, modelSlug, modality, profileName, profileSlug, inputUnit, outputUnit, currency string
+		var inputPrice, outputPrice float64
+		if err := rows.Scan(&provider, &modelName, &modelSlug, &modality, &profileName, &profileSlug, &inputPrice, &inputUnit, &outputPrice, &outputUnit, &currency); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{
+			"provider":          provider,
+			"model":             modelName,
+			"model_slug":        modelSlug,
+			"modality":          modality,
+			"profile":           profileName,
+			"profile_slug":      profileSlug,
+			"input_price":       inputPrice,
+			"input_price_unit":  inputUnit,
+			"output_price":      outputPrice,
+			"output_price_unit": outputUnit,
+			"currency":          currency,
+		})
+	}
+	writeJSON(w, http.StatusOK, response{"pricing": items})
+}
+
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0)

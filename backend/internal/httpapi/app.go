@@ -30,6 +30,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/signup", a.signup)
 	mux.HandleFunc("POST /api/v1/auth/social/dev", a.devSocialLogin)
 	mux.HandleFunc("GET /api/v1/models", a.models)
+	mux.HandleFunc("GET /api/v1/pricing", a.pricing)
 	mux.HandleFunc("GET /api/v1/projects", a.projects)
 	mux.HandleFunc("POST /api/v1/projects", a.createProject)
 	mux.HandleFunc("GET /api/v1/conversations", a.conversations)

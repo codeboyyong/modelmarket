@@ -436,8 +436,7 @@ small {
 }
 
 .model-card-head,
-.meta-row,
-.price-row {
+.meta-row {
   display: flex;
   justify-content: space-between;
   gap: 14px;
@@ -530,6 +529,27 @@ textarea {
   background: var(--panel-2);
   color: var(--text);
   padding: 11px 12px;
+}
+
+.dropdown-field {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.dropdown-field input {
+  padding-right: 34px;
+}
+
+.dropdown-arrow {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-54%);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .catalog-toolbar {
@@ -762,6 +782,7 @@ textarea {
 }
 
 .workbench-model-picker {
+  position: relative;
   display: grid;
   gap: 12px;
   margin-bottom: 14px;
@@ -798,10 +819,20 @@ textarea {
 }
 
 .workbench-model-list {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: calc(100% - 12px);
+  z-index: 20;
   display: grid;
   gap: 8px;
-  max-height: 260px;
+  max-height: 320px;
   overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 8px;
 }
 
 .workbench-model-option {
@@ -895,10 +926,35 @@ pre {
   gap: 10px;
 }
 
+.workspace-picker {
+  position: relative;
+  margin-bottom: 18px;
+}
+
+.workspace-picker input {
+  cursor: pointer;
+}
+
+.workspace-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 18;
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
 .workspace-row,
 .stack-list div,
-.admin-table div,
-.pricing-table div {
+.admin-table div {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 11px;
@@ -906,6 +962,7 @@ pre {
 }
 
 .workspace-row {
+  position: relative;
   display: grid;
   width: 100%;
   gap: 5px;
@@ -929,17 +986,262 @@ pre {
   font-size: 13px;
 }
 
+.artifact-row {
+  padding-right: 42px;
+}
+
+.artifact-transfer-icon {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--accent-2);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.artifact-transfer-icon.uploaded {
+  color: var(--warning);
+}
+
 .admin-pricing {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   gap: 18px;
   padding-bottom: 70px;
 }
 
-.admin-table,
-.pricing-table {
+.pricing-main-panel {
+  min-width: 0;
+}
+
+.credit-panel {
+  align-self: start;
+}
+
+.credit-panel-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.credit-panel-head h2 {
+  margin-bottom: 0;
+}
+
+.credit-panel-head label {
+  min-width: 142px;
+}
+
+.credit-balance-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.credit-balance-card span,
+.chart-section h3 {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.credit-balance-card strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 30px;
+}
+
+.chart-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.chart-section h3 {
+  margin: 0 0 10px;
+}
+
+.line-chart {
+  display: grid;
+  gap: 8px;
+}
+
+.line-chart svg {
+  width: 100%;
+  height: 132px;
+}
+
+.line-chart line {
+  stroke: var(--line);
+}
+
+.line-chart polyline {
+  fill: none;
+  stroke: var(--accent-2);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.line-chart circle {
+  fill: var(--accent-2);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.chart-note,
+.usage-legend div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chart-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chart-note strong {
+  color: var(--text);
+}
+
+.usage-chart-row {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.pie-chart {
+  display: grid;
+  place-items: center;
+  width: 126px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+
+.pie-chart span {
+  display: grid;
+  place-items: center;
+  width: 70px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--panel);
+  font-weight: 900;
+}
+
+.pie-chart small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.usage-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.usage-legend div {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.usage-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.usage-legend span {
+  flex: 1;
+}
+
+.usage-legend strong {
+  color: var(--text);
+}
+
+.admin-table {
   display: grid;
   gap: 10px;
+}
+
+.pricing-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+
+.pricing-toolbar label {
+  flex: 1 1 280px;
+}
+
+.pricing-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+table.pricing-table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pricing-table th,
+.pricing-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.pricing-table th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.pricing-table td small {
+  display: block;
+  margin-top: 4px;
+}
+
+.table-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent-2);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 0;
+  text-align: left;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
+.pricing-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .admin-summary {
@@ -965,6 +1267,46 @@ code {
   color: var(--accent-2);
 }
 
+.static-page {
+  padding: 32px clamp(18px, 4vw, 54px) 70px;
+}
+
+.static-panel {
+  width: min(980px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: clamp(22px, 4vw, 42px);
+}
+
+.static-panel h1 {
+  margin: 0 0 12px;
+}
+
+.static-panel > p {
+  max-width: 760px;
+}
+
+.static-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 26px;
+}
+
+.static-grid section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  padding: 16px;
+}
+
+.static-grid h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
 .site-footer {
   display: flex;
   justify-content: space-between;
@@ -984,7 +1326,8 @@ code {
 }
 
 .site-footer strong,
-.site-footer a:hover {
+.site-footer a:hover,
+.footer-menu-trigger:hover {
   color: var(--text);
 }
 
@@ -992,8 +1335,53 @@ code {
   justify-content: flex-end;
 }
 
-.site-footer a {
+.site-footer a,
+.footer-menu-trigger {
   font-weight: 800;
+}
+
+.footer-menu {
+  position: relative;
+}
+
+.footer-menu-trigger {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.site-footer .footer-submenu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% - 1px);
+  z-index: 12;
+  display: none;
+  min-width: 180px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
+.footer-menu:hover .footer-submenu,
+.footer-menu:focus-within .footer-submenu,
+.footer-menu.open .footer-submenu {
+  display: grid;
+}
+
+.footer-submenu a {
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.footer-submenu a:hover {
+  background: var(--chip);
 }
 
 .empty-state {
@@ -1011,6 +1399,7 @@ code {
   .detail-grid,
   .workbench-section,
   .admin-pricing,
+  .static-grid,
   .product-band,
   .api-console {
     grid-template-columns: 1fr;
@@ -1043,11 +1432,21 @@ code {
     flex-direction: column;
   }
 
+  .footer-submenu {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
+  }
+
   .stats-strip {
     grid-template-columns: 1fr;
   }
 
   .admin-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-chart-row {
     grid-template-columns: 1fr;
   }
 

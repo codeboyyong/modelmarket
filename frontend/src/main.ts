@@ -44,6 +44,29 @@ type APIKey = {
   status: string;
 };
 
+type PricingRow = {
+  provider: string;
+  model: string;
+  model_slug: string;
+  modality: string;
+  profile: string;
+  profile_slug: string;
+  input_price: number;
+  input_price_unit: string;
+  output_price: number;
+  output_price_unit: string;
+  currency: string;
+};
+
+type CreditRange = "7" | "30" | "90";
+
+type UsageSlice = {
+  type: "image" | "audio" | "video";
+  label: string;
+  credits: number;
+  color: string;
+};
+
 type ChatResponse = {
   id?: string;
   model?: string;
@@ -71,11 +94,17 @@ let models: Model[] = [];
 let projects: Project[] = [];
 let conversations: Conversation[] = [];
 let assets: WorkspaceAsset[] = [];
+let pricingRows: PricingRow[] = [];
 let signupMode = false;
 let selectedModality = "all";
+let selectedPricingModality = "all";
 let workbenchModality = "image";
 let selectedWorkbenchModel = "";
-const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "pricing"]);
+let workbenchPickerOpen = false;
+let projectPickerOpen = false;
+let conversationPickerOpen = false;
+let currentConversationID = "";
+const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "pricing", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -128,7 +157,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 async function loadAll() {
-  await Promise.all([loadSummary(), loadProjects(), loadModels()]);
+  await Promise.all([loadSummary(), loadProjects(), loadModels(), loadPricing()]);
 }
 
 async function loadSummary() {
@@ -163,12 +192,14 @@ async function loadProjects() {
   const [project] = projects;
   if (project) currentProjectID = project.id;
   renderProjects();
-  if (currentProjectID) await Promise.all([loadAPIKeys(), loadWorkspace()]);
+  if (currentProjectID) await loadWorkspace();
 }
 
 function renderProjects() {
+  const filter = ($("projectFilter") as HTMLInputElement).value.trim().toLowerCase();
+  const visible = projects.filter((project) => [project.name, project.organization].join(" ").toLowerCase().includes(filter));
   $("projects").innerHTML =
-    projects
+    visible
       .map((project) => {
         const credits = project.paid_credits + project.promotional_credits;
         const active = project.id === currentProjectID ? " active" : "";
@@ -178,6 +209,25 @@ function renderProjects() {
         </button>`;
       })
       .join("") || "<div class=\"empty-state\">No project loaded. Run the dev test data script first.</div>";
+    $("projects").classList.toggle("hidden", !projectPickerOpen);
+    renderSelectedProject();
+    renderCreditAnalytics();
+}
+
+function renderSelectedProject() {
+  const selected = projects.find((project) => project.id === currentProjectID);
+  if (!projectPickerOpen) ($("projectFilter") as HTMLInputElement).value = selected?.name || "";
+}
+
+function openProjectPicker(clearFilter = false) {
+  projectPickerOpen = true;
+  if (clearFilter) ($("projectFilter") as HTMLInputElement).value = "";
+  renderProjects();
+}
+
+function closeProjectPicker() {
+  projectPickerOpen = false;
+  renderProjects();
 }
 
 async function createProject() {
@@ -189,6 +239,7 @@ async function createProject() {
   });
   projects = [...projects, data.project];
   currentProjectID = data.project.id;
+  currentConversationID = "";
   renderProjects();
   await loadWorkspace();
 }
@@ -207,27 +258,76 @@ async function loadWorkspace() {
     ]);
     conversations = conversationData.conversations;
     assets = assetData.assets;
+    if (!conversations.some((conversation) => conversation.id === currentConversationID)) {
+      currentConversationID = conversations[0]?.id || "";
+    }
   } catch {
     conversations = [];
     assets = [];
+    currentConversationID = "";
   }
   renderWorkspaceLists();
 }
 
 function renderWorkspaceLists() {
+  const conversationFilter = ($("conversationFilter") as HTMLInputElement).value.trim().toLowerCase();
+  const visibleConversations = conversations.filter((conversation) =>
+    [conversation.title, conversation.status].join(" ").toLowerCase().includes(conversationFilter)
+  );
   $("conversations").innerHTML =
-    conversations
-      .map((conversation) => `<button class="workspace-row" type="button" data-conversation-id="${escapeHTML(conversation.id)}">
+    visibleConversations
+      .map((conversation) => `<button class="workspace-row${conversation.id === currentConversationID ? " active" : ""}" type="button" data-conversation-id="${escapeHTML(conversation.id)}">
         <span><strong>${escapeHTML(conversation.title)}</strong><small>${conversation.message_count} messages / ${escapeHTML(conversation.status)}</small></span>
       </button>`)
       .join("") || "<div class=\"empty-state\">No conversations yet.</div>";
+  $("conversations").classList.toggle("hidden", !conversationPickerOpen);
   $("artifacts").innerHTML =
     assets
-      .map((asset) => `<div class="workspace-row">
+      .map((asset) => `<div class="workspace-row artifact-row">
+        <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
         <p>${escapeHTML(asset.storage_path)}</p>
       </div>`)
       .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
+  renderSelectedConversation();
+}
+
+function artifactTransferLabel(asset: WorkspaceAsset) {
+  return asset.asset_type === "upload" ? "Uploaded artifact" : "Downloadable artifact";
+}
+
+function artifactTransferClass(asset: WorkspaceAsset) {
+  return asset.asset_type === "upload" ? "uploaded" : "downloaded";
+}
+
+function artifactTransferIcon(asset: WorkspaceAsset) {
+  return asset.asset_type === "upload" ? "↑" : "↓";
+}
+
+function renderSelectedConversation() {
+  const selected = conversations.find((conversation) => conversation.id === currentConversationID) || conversations[0];
+  if (selected && !currentConversationID) currentConversationID = selected.id;
+  if (!conversationPickerOpen) ($("conversationFilter") as HTMLInputElement).value = selected?.title || "";
+}
+
+function openConversationPicker(clearFilter = false) {
+  conversationPickerOpen = true;
+  if (clearFilter) ($("conversationFilter") as HTMLInputElement).value = "";
+  renderWorkspaceLists();
+}
+
+function closeConversationPicker() {
+  conversationPickerOpen = false;
+  renderWorkspaceLists();
+}
+
+function closeFooterMenus() {
+  document.querySelectorAll<HTMLElement>(".footer-menu.open").forEach((menu) => {
+    menu.classList.remove("open");
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-footer-menu]").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
 }
 
 async function createConversation() {
@@ -238,6 +338,7 @@ async function createConversation() {
     body: JSON.stringify({ project_id: currentProjectID, title })
   });
   conversations = [data.conversation, ...conversations];
+  currentConversationID = data.conversation.id;
   renderWorkspaceLists();
 }
 
@@ -251,7 +352,6 @@ async function loadModels() {
   renderModelControls();
   renderModels();
   renderMetadata();
-  renderPricing();
 }
 
 function renderModelControls() {
@@ -270,6 +370,7 @@ function renderModelControls() {
         return `<option value="${escapeHTML(value)}"${value === selectedWorkbenchModel ? " selected" : ""}>${escapeHTML(model.name)}</option>`;
       })
       .join("") || "<option value=\"mock-chat\">Mock Chat</option>";
+  renderSelectedWorkbenchModel();
   renderWorkbenchModelPicker();
 }
 
@@ -277,7 +378,8 @@ function renderWorkbenchModelPicker() {
   document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
     button.classList.toggle("active", button.dataset.workbenchModality === workbenchModality);
   });
-  const query = ($("workbenchModelFilter") as HTMLInputElement).value.trim().toLowerCase();
+  const filterInput = $("workbenchModelFilter") as HTMLInputElement;
+  const query = filterInput.value.trim().toLowerCase();
   const visible = models.filter((model) => {
     const matchesModality = model.modality === workbenchModality;
     const matchesQuery = [model.name, model.slug, model.provider, model.profile_name].join(" ").toLowerCase().includes(query);
@@ -293,7 +395,7 @@ function renderWorkbenchModelPicker() {
         </button>`;
       })
       .join("") || "<div class=\"empty-state\">No ${escapeHTML(workbenchModality)} models match the filter.</div>";
-  renderSelectedWorkbenchModel();
+  $("workbenchModelList").classList.toggle("hidden", !workbenchPickerOpen);
 }
 
 function renderSelectedWorkbenchModel() {
@@ -301,6 +403,20 @@ function renderSelectedWorkbenchModel() {
   $("selectedModelName").textContent = selected?.name || "No model selected";
   $("selectedModelModality").textContent = selected?.modality || "-";
   ($("modelSelect") as HTMLSelectElement).value = selectedWorkbenchModel;
+  const input = $("workbenchModelFilter") as HTMLInputElement;
+  if (!workbenchPickerOpen) input.value = selected?.name || "";
+}
+
+function openWorkbenchPicker(clearFilter = false) {
+  workbenchPickerOpen = true;
+  if (clearFilter) ($("workbenchModelFilter") as HTMLInputElement).value = "";
+  renderWorkbenchModelPicker();
+}
+
+function closeWorkbenchPicker() {
+  workbenchPickerOpen = false;
+  renderSelectedWorkbenchModel();
+  renderWorkbenchModelPicker();
 }
 
 function renderModels() {
@@ -436,12 +552,11 @@ function priceFor(model: Model): string {
 async function loadAPIKeys() {
   try {
     const data = await request<{ api_keys: APIKey[] }>(`/api/v1/api-keys?project_id=${encodeURIComponent(currentProjectID)}`);
-    $("apiKeys").innerHTML =
-      data.api_keys
-        .map((key) => `<div><strong>${escapeHTML(key.name)}</strong><small>${escapeHTML(key.prefix)}... ${escapeHTML(key.status)}</small></div>`)
-        .join("") || "<div class=\"empty-state\">No API keys yet.</div>";
+    currentAPIKey = "";
+    void data;
   } catch (error) {
-    $("apiKeys").innerHTML = `<div class="empty-state">${escapeHTML(error instanceof Error ? error.message : String(error))}</div>`;
+    currentAPIKey = "";
+    void error;
   }
 }
 
@@ -452,8 +567,6 @@ async function createKey() {
     body: JSON.stringify({ project_id: currentProjectID, name: "Frontend dev key" })
   });
   currentAPIKey = data.api_key;
-  $("newKey").innerHTML = `<p><strong>New key:</strong> <code>${escapeHTML(data.api_key)}</code></p>`;
-  await loadAPIKeys();
 }
 
 async function sendPrompt() {
@@ -468,7 +581,6 @@ async function sendPrompt() {
   });
   const answer = data.choices?.[0]?.message?.content || "Mock response received from backend.";
   appendMessage("assistant", answer);
-  $("chatResult").textContent = JSON.stringify(data, null, 2);
   await loadSummary();
 }
 
@@ -493,13 +605,125 @@ function metaRow(label: string, value: string, note: string) {
 }
 
 function renderPricing() {
-  $("pricingRows").innerHTML = models
-    .slice(0, 5)
-    .map((model) => `<div class="price-row">
-      <span><strong>${escapeHTML(model.name)}</strong><small>${escapeHTML(model.provider)}</small></span>
-      <span>${escapeHTML(priceFor(model))}</span>
-    </div>`)
+  const query = ($("pricingSearch") as HTMLInputElement).value.trim().toLowerCase();
+  const visible = pricingRows.filter((row) => {
+    const matchesQuery = [row.provider, row.model, row.model_slug, row.profile].join(" ").toLowerCase().includes(query);
+    const matchesModality = selectedPricingModality === "all" || row.modality === selectedPricingModality;
+    return matchesQuery && matchesModality;
+  });
+  $("pricingRows").innerHTML =
+    visible
+      .map((row) => `<tr>
+        <td><strong>${escapeHTML(row.provider)}</strong><small>${escapeHTML(row.modality)}</small></td>
+        <td>
+          <button class="table-link" type="button" data-pricing-model-slug="${escapeHTML(row.model_slug)}">${escapeHTML(row.model)}</button>
+          <small>${escapeHTML(row.model_slug)}</small>
+        </td>
+        <td>${escapeHTML(formatPrice(row.input_price, row.input_price_unit, row.currency))}</td>
+        <td>${escapeHTML(formatPrice(row.output_price, row.output_price_unit, row.currency))}</td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No pricing rows match the current filters.</td></tr>";
+}
+
+function renderCreditAnalytics() {
+  const range = (($("creditRange") as HTMLSelectElement).value || "30") as CreditRange;
+  const selectedProject = projects.find((project) => project.id === currentProjectID);
+  const balance = selectedProject ? selectedProject.paid_credits + selectedProject.promotional_credits : 12840;
+  $("currentCreditBalance").textContent = `${Math.round(balance).toLocaleString()} credits`;
+  renderCreditLineChart(buildCreditHistory(range, balance));
+  renderCreditUsageChart(buildCreditUsage(range));
+}
+
+function buildCreditHistory(range: CreditRange, balance: number) {
+  const days = Number(range);
+  return Array.from({ length: days }, (_, index) => {
+    const remaining = days - index - 1;
+    const spend = remaining * (days === 7 ? 38 : days === 30 ? 24 : 11);
+    const variance = Math.sin(index * 0.9) * (days === 7 ? 18 : 42);
+    return Math.max(0, Math.round(balance + spend + variance));
+  });
+}
+
+function buildCreditUsage(range: CreditRange): UsageSlice[] {
+  const multiplier = range === "7" ? 0.35 : range === "90" ? 2.8 : 1;
+  return [
+    { type: "image", label: "Image", credits: Math.round(940 * multiplier), color: "#3f8cff" },
+    { type: "audio", label: "Audio", credits: Math.round(520 * multiplier), color: "#12b981" },
+    { type: "video", label: "Video", credits: Math.round(1380 * multiplier), color: "#f59e0b" }
+  ];
+}
+
+function renderCreditLineChart(points: number[]) {
+  const width = 320;
+  const height = 132;
+  const pad = 10;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = Math.max(1, max - min);
+  const coords = points.map((value, index) => {
+    const x = pad + (index / Math.max(1, points.length - 1)) * (width - pad * 2);
+    const y = pad + (1 - (value - min) / span) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const last = points[points.length - 1] || 0;
+  const first = points[0] || last;
+  const change = last - first;
+  $("creditLineChart").innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" aria-hidden="true">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" />
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" />
+      <polyline points="${coords.join(" ")}" />
+      <circle cx="${coords[coords.length - 1]?.split(",")[0] || pad}" cy="${coords[coords.length - 1]?.split(",")[1] || pad}" r="4" />
+    </svg>
+    <div class="chart-note"><span>${first.toLocaleString()} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString()}</strong></div>
+  `;
+}
+
+function renderCreditUsageChart(slices: UsageSlice[]) {
+  const total = slices.reduce((sum, slice) => sum + slice.credits, 0) || 1;
+  let cursor = 0;
+  const gradient = slices
+    .map((slice) => {
+      const start = cursor;
+      cursor += (slice.credits / total) * 100;
+      return `${slice.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+    })
+    .join(", ");
+  $("creditPieChart").style.background = `conic-gradient(${gradient})`;
+  $("creditPieChart").innerHTML = `<span>${total.toLocaleString()}<small>credits</small></span>`;
+  $("creditUsageLegend").innerHTML = slices
+    .map((slice) => {
+      const percent = Math.round((slice.credits / total) * 100);
+      return `<div><i style="background:${slice.color}"></i><span>${escapeHTML(slice.label)}</span><strong>${percent}%</strong></div>`;
+    })
     .join("");
+}
+
+async function loadPricing() {
+  try {
+    const data = await request<{ pricing: PricingRow[] }>("/api/v1/pricing");
+    pricingRows = data.pricing;
+  } catch {
+    pricingRows = models.map((model) => ({
+      provider: model.provider,
+      model: model.name,
+      model_slug: model.slug,
+      modality: model.modality,
+      profile: model.profile_name,
+      profile_slug: model.profile_slug,
+      input_price: 0,
+      input_price_unit: "request",
+      output_price: 0,
+      output_price_unit: "request",
+      currency: "CREDIT"
+    }));
+  }
+  renderPricing();
+}
+
+function formatPrice(value: number, unit: string, currency: string) {
+  const amount = Number(value) === 0 ? "0" : Number(value).toLocaleString(undefined, { maximumFractionDigits: 8 });
+  return `${amount} ${currency} / ${unit}`;
 }
 
 function showError(error: unknown) {
@@ -683,16 +907,26 @@ $("loginForm").addEventListener("submit", (event) => submitAuth(event as SubmitE
 document.querySelectorAll<HTMLButtonElement>(".social-button").forEach((button) => {
   button.addEventListener("click", () => socialLogin(button.dataset.provider || ""));
 });
-$("createKey").addEventListener("click", () => createKey().catch(showError));
 $("createProject").addEventListener("click", () => createProject().catch(showError));
 $("createConversation").addEventListener("click", () => createConversation().catch(showError));
+$("projectFilter").addEventListener("focus", () => openProjectPicker(true));
+$("projectFilter").addEventListener("input", () => openProjectPicker(false));
+$("conversationFilter").addEventListener("focus", () => openConversationPicker(true));
+$("conversationFilter").addEventListener("input", () => openConversationPicker(false));
 $("projects").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-project-id]");
   if (!button) return;
   currentProjectID = button.dataset.projectId || currentProjectID;
+  currentConversationID = "";
+  closeProjectPicker();
   renderProjects();
-  loadAPIKeys().catch(showError);
   loadWorkspace().catch(showError);
+});
+$("conversations").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-conversation-id]");
+  if (!button) return;
+  currentConversationID = button.dataset.conversationId || currentConversationID;
+  closeConversationPicker();
 });
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
 $("backToModels").addEventListener("click", () => setActiveTab("models"));
@@ -707,20 +941,61 @@ $("modelDetailContent").addEventListener("click", async (event) => {
   if (copyButton) await navigator.clipboard?.writeText(copyButton.dataset.copyModel || "");
 });
 $("modelSearch").addEventListener("input", renderModels);
-$("workbenchModelFilter").addEventListener("input", renderWorkbenchModelPicker);
+$("pricingSearch").addEventListener("input", renderPricing);
+$("creditRange").addEventListener("change", renderCreditAnalytics);
+$("pricingRows").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pricing-model-slug]");
+  if (button) showModelDetail(button.dataset.pricingModelSlug || "");
+});
+document.querySelectorAll<HTMLButtonElement>("[data-pricing-modality]").forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedPricingModality = button.dataset.pricingModality || "all";
+    document.querySelectorAll<HTMLButtonElement>("[data-pricing-modality]").forEach((item) => {
+      item.classList.toggle("active", item.dataset.pricingModality === selectedPricingModality);
+    });
+    renderPricing();
+  });
+});
+$("workbenchModelFilter").addEventListener("focus", () => openWorkbenchPicker(true));
+$("workbenchModelFilter").addEventListener("input", () => openWorkbenchPicker(false));
 document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
   button.addEventListener("click", () => {
     workbenchModality = button.dataset.workbenchModality || "image";
     const next = models.find((model) => model.modality === workbenchModality);
     if (next) selectedWorkbenchModel = next.profile_slug || next.slug;
-    renderWorkbenchModelPicker();
+    openWorkbenchPicker(true);
   });
 });
 $("workbenchModelList").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-workbench-model]");
   if (!button) return;
   selectedWorkbenchModel = button.dataset.workbenchModel || selectedWorkbenchModel;
-  renderWorkbenchModelPicker();
+  closeWorkbenchPicker();
+});
+document.addEventListener("click", (event) => {
+  const target = event.target as Node;
+  const picker = document.querySelector(".workbench-model-picker");
+  if (picker && !picker.contains(target)) closeWorkbenchPicker();
+  const projectPicker = document.querySelector("#projectPicker");
+  if (projectPicker && !projectPicker.contains(target)) closeProjectPicker();
+  const conversationPicker = document.querySelector("#conversationPicker");
+  if (conversationPicker && !conversationPicker.contains(target)) closeConversationPicker();
+  const footerMenu = (event.target as HTMLElement).closest(".footer-menu");
+  if (!footerMenu) closeFooterMenus();
+});
+document.querySelectorAll<HTMLButtonElement>("[data-footer-menu]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const menu = button.closest(".footer-menu");
+    const wasOpen = menu?.classList.contains("open") || false;
+    closeFooterMenus();
+    if (menu && !wasOpen) {
+      menu.classList.add("open");
+      button.setAttribute("aria-expanded", "true");
+    }
+  });
+});
+document.querySelectorAll<HTMLElement>(".footer-submenu a").forEach((link) => {
+  link.addEventListener("click", closeFooterMenus);
 });
 document.querySelectorAll<HTMLButtonElement>("[data-modality]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -744,5 +1019,6 @@ window.addEventListener("hashchange", () => setActiveTab(window.location.hash.sl
 applyTheme(localStorage.getItem("themeMode") || "system");
 applyLanguage(localStorage.getItem("language") || "en");
 renderAuthUser();
+renderCreditAnalytics();
 setActiveTab(window.location.hash.slice(1) || "home");
 loadAll().catch(showError);

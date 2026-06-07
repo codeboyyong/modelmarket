@@ -63,10 +63,14 @@ INSERT INTO memberships (id, user_id, organization_id, role) VALUES
   ('membership-developer', 'user-developer', 'org-demo', 'developer');
 
 INSERT INTO projects (id, organization_id, name, slug, environment, retention_policy) VALUES
-  ('project-demo', 'org-demo', 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}');
+  ('project-demo', 'org-demo', 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}'),
+  ('project-image-studio', 'org-demo', 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
+  ('project-video-lab', 'org-demo', 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":30,"asset_days":30}');
 
 INSERT INTO api_keys (id, project_id, name, prefix, key_hash, scopes, status) VALUES
-  ('api-key-demo', 'project-demo', 'Seeded development key', 'mk_seeded', 'seeded-key-hash-replace-before-real-use', 'models:read,chat:create', 'active');
+  ('api-key-demo', 'project-demo', 'Seeded development key', 'mk_seeded', 'seeded-key-hash-replace-before-real-use', 'models:read,chat:create', 'active'),
+  ('api-key-image-studio', 'project-image-studio', 'Image Studio demo key', 'mk_imgdemo', 'image-studio-demo-key-hash', 'models:read,chat:create', 'active'),
+  ('api-key-video-lab', 'project-video-lab', 'Video Lab demo key', 'mk_viddemo', 'video-lab-demo-key-hash', 'models:read,chat:create', 'active');
 
 INSERT INTO providers (id, slug, name, status, endpoint_url, credential_ref, metadata) VALUES
   ('provider-mock', 'mock-provider', 'Mock Provider', 'active', 'mock://provider', NULL, '{"mode":"dev","supports_streaming":true}'),
@@ -182,7 +186,9 @@ INSERT INTO price_rules (
   ('price-openrouter-gpt-audio-mini-audio', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.0000006"}');
 
 INSERT INTO wallets (id, project_id, paid_credits, promotional_credits) VALUES
-  ('wallet-demo', 'project-demo', 10000, 5000);
+  ('wallet-demo', 'project-demo', 10000, 5000),
+  ('wallet-image-studio', 'project-image-studio', 2500, 1500),
+  ('wallet-video-lab', 'project-video-lab', 5000, 2000);
 
 INSERT INTO ledger_transactions (id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) VALUES
   ('ledger-dev-paid', 'wallet-demo', 'grant', 10000, 'paid', 'posted', 'dev seed paid credits', 'dev-seed-paid-credit-grant', '{}'),
@@ -192,17 +198,37 @@ INSERT INTO coupons (id, code, credit_amount, status, metadata) VALUES
   ('coupon-dev-welcome', 'DEV-WELCOME', 1000, 'active', '{"description":"Development welcome coupon"}');
 
 INSERT INTO conversations (id, project_id, title, status) VALUES
-  ('conversation-demo', 'project-demo', 'Seeded demo conversation', 'active');
+  ('conversation-demo', 'project-demo', 'Seeded demo conversation', 'active'),
+  ('conversation-image-product', 'project-image-studio', 'Product hero image concepts', 'active'),
+  ('conversation-image-avatar', 'project-image-studio', 'Avatar style exploration', 'active'),
+  ('conversation-video-launch', 'project-video-lab', 'Launch teaser storyboard', 'active'),
+  ('conversation-video-social', 'project-video-lab', 'Short social clip variants', 'active');
 
 INSERT INTO conversation_branches (id, conversation_id, parent_branch_id, name) VALUES
-  ('branch-demo-main', 'conversation-demo', NULL, 'Main');
+  ('branch-demo-main', 'conversation-demo', NULL, 'Main'),
+  ('branch-image-product-main', 'conversation-image-product', NULL, 'Main'),
+  ('branch-image-avatar-main', 'conversation-image-avatar', NULL, 'Main'),
+  ('branch-video-launch-main', 'conversation-video-launch', NULL, 'Main'),
+  ('branch-video-social-main', 'conversation-video-social', NULL, 'Main');
 
 INSERT INTO messages (id, conversation_id, branch_id, role, content, model_profile_id, metadata) VALUES
   ('message-demo-user', 'conversation-demo', 'branch-demo-main', 'user', 'What can I do in this model market?', NULL, '{}'),
-  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.', 'profile-mock-chat-default', '{"provider":"mock-provider"}');
+  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.', 'profile-mock-chat-default', '{"provider":"mock-provider"}'),
+  ('message-image-product-user', 'conversation-image-product', 'branch-image-product-main', 'user', 'Create a clean product hero image for a compact AI hardware device on a white desk.', NULL, '{}'),
+  ('message-image-product-assistant', 'conversation-image-product', 'branch-image-product-main', 'assistant', 'Generated a bright studio concept with soft shadows, brushed metal details, and a minimal background suitable for a landing page hero.', 'profile-openrouter-mai-image-25-default', '{"provider":"openrouter","artifact":"asset-image-product-hero"}'),
+  ('message-image-avatar-user', 'conversation-image-avatar', 'branch-image-avatar-main', 'user', 'Explore three avatar styles for an engineering team profile page.', NULL, '{}'),
+  ('message-image-avatar-assistant', 'conversation-image-avatar', 'branch-image-avatar-main', 'assistant', 'Created style directions: editorial monochrome portraits, warm illustrated badges, and crisp 3D profile icons.', 'profile-openrouter-grok-imagine-image-quality-default', '{"provider":"openrouter","artifact":"asset-image-avatar-board"}'),
+  ('message-video-launch-user', 'conversation-video-launch', 'branch-video-launch-main', 'user', 'Draft a 10 second launch teaser showing model routing from prompt to final video.', NULL, '{}'),
+  ('message-video-launch-assistant', 'conversation-video-launch', 'branch-video-launch-main', 'assistant', 'Prepared a storyboard with three shots: prompt entry, routing visualization, and generated clip preview with synchronized captions.', 'profile-openrouter-veo-31-fast-default', '{"provider":"openrouter","artifact":"asset-video-launch-storyboard"}'),
+  ('message-video-social-user', 'conversation-video-social', 'branch-video-social-main', 'user', 'Make short social variants for image, audio, and video generation features.', NULL, '{}'),
+  ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', '{"provider":"openrouter","artifact":"asset-video-social-variants"}');
 
 INSERT INTO workspace_assets (id, project_id, conversation_id, asset_type, storage_path, mime_type, size_bytes, metadata) VALUES
-  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 'mock://assets/demo.txt', 'text/plain', 128, '{"mock":true}');
+  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 'mock://assets/demo.txt', 'text/plain', 128, '{"mock":true}'),
+  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 'mock://assets/image-studio/product-hero.png', 'image/png', 2048000, '{"prompt":"compact AI hardware device on a white desk"}'),
+  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 'mock://assets/image-studio/avatar-style-board.png', 'image/png', 1536000, '{"prompt":"engineering team avatar style exploration"}'),
+  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 'mock://assets/video-lab/launch-teaser-storyboard.json', 'application/json', 8192, '{"duration_seconds":10,"shots":3}'),
+  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 'mock://assets/video-lab/social-variants.mp4', 'video/mp4', 7340032, '{"variants":3,"aspect_ratio":"9:16"}');
 
 INSERT INTO message_attachments (id, message_id, asset_id) VALUES
   ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');
