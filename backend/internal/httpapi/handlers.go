@@ -298,6 +298,123 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"projects": items})
 }
 
+func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_project_name"})
+		return
+	}
+	id := "project_" + randomHex(8)
+	slug := slugify(name) + "-" + randomHex(3)
+	_, err := a.DB.ExecContext(r.Context(), `
+		insert into projects(id, organization_id, name, slug, environment, retention_policy)
+		values($1, 'org-demo', $2, $3, 'dev', '{"conversation_days":30,"asset_days":30}')`, id, name, slug)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	_, _ = a.DB.ExecContext(r.Context(), `
+		insert into wallets(id, project_id, paid_credits, promotional_credits)
+		values($1, $2, 0, 1000)`, "wallet_"+randomHex(8), id)
+	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization": "Demo Organization", "paid_credits": 0, "promotional_credits": 1000}})
+}
+
+func (a *App) conversations(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project_id")
+	if projectID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_project_id"})
+		return
+	}
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select c.id, c.title, c.status, c.created_at, c.updated_at, count(m.id)
+		from conversations c
+		left join messages m on m.conversation_id = c.id
+		where c.project_id = $1
+		group by c.id, c.title, c.status, c.created_at, c.updated_at
+		order by c.updated_at desc`, projectID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, title, status string
+		var createdAt, updatedAt time.Time
+		var messageCount int64
+		if err := rows.Scan(&id, &title, &status, &createdAt, &updatedAt, &messageCount); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "title": title, "status": status, "created_at": createdAt, "updated_at": updatedAt, "message_count": messageCount})
+	}
+	writeJSON(w, http.StatusOK, response{"conversations": items})
+}
+
+func (a *App) createConversation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID string `json:"project_id"`
+		Title     string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "New conversation"
+	}
+	id := "conversation_" + randomHex(8)
+	_, err := a.DB.ExecContext(r.Context(), `
+		insert into conversations(id, project_id, title, status)
+		values($1, $2, $3, 'active')`, id, req.ProjectID, title)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	_, _ = a.DB.ExecContext(r.Context(), `
+		insert into conversation_branches(id, conversation_id, parent_branch_id, name)
+		values($1, $2, null, 'Main')`, "branch_"+randomHex(8), id)
+	writeJSON(w, http.StatusCreated, response{"conversation": response{"id": id, "title": title, "status": "active", "message_count": 0}})
+}
+
+func (a *App) assets(w http.ResponseWriter, r *http.Request) {
+	projectID := r.URL.Query().Get("project_id")
+	if projectID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_project_id"})
+		return
+	}
+	rows, err := a.DB.QueryContext(r.Context(), `
+		select id, coalesce(conversation_id, ''), asset_type, storage_path, coalesce(mime_type, ''), coalesce(size_bytes, 0), metadata, created_at
+		from workspace_assets
+		where project_id = $1
+		order by created_at desc`, projectID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, conversationID, assetType, storagePath, mimeType, metadata string
+		var sizeBytes int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &conversationID, &assetType, &storagePath, &mimeType, &sizeBytes, &metadata, &createdAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		items = append(items, response{"id": id, "conversation_id": conversationID, "asset_type": assetType, "storage_path": storagePath, "mime_type": mimeType, "size_bytes": sizeBytes, "metadata": metadata, "created_at": createdAt})
+	}
+	writeJSON(w, http.StatusOK, response{"assets": items})
+}
+
 func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
 	rows, err := a.DB.QueryContext(r.Context(), `
@@ -429,6 +546,28 @@ func randomHex(bytesLen int) string {
 func hashAPIKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+func slugify(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, ch := range value {
+		if ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' {
+			b.WriteRune(ch)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "project"
+	}
+	return slug
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

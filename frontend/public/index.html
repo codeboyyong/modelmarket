@@ -141,6 +141,11 @@
         </div>
       </section>
 
+      <section class="model-detail tab-panel" id="modelDetail" data-panel="model-detail">
+        <button class="ghost detail-back" id="backToModels" type="button">Back to Models</button>
+        <div id="modelDetailContent" class="model-detail-content"></div>
+      </section>
+
       <section class="tab-panel" id="api" data-panel="api">
         <div class="section-heading">
           <p class="eyebrow">API console</p>
@@ -186,7 +191,28 @@
               <p class="eyebrow">Workbench</p>
               <h2>Test a model profile</h2>
             </div>
-            <select id="modelSelect" aria-label="Select model"></select>
+          </div>
+          <div class="workbench-model-picker">
+            <div class="picker-head">
+              <div>
+                <small>Selected model</small>
+                <strong id="selectedModelName">Loading models...</strong>
+              </div>
+              <span class="tag" id="selectedModelModality">-</span>
+            </div>
+            <div class="picker-controls">
+              <div class="modality-tabs" role="tablist" aria-label="Workbench model modality">
+                <button class="filter-tab active" type="button" data-workbench-modality="image">Image</button>
+                <button class="filter-tab" type="button" data-workbench-modality="audio">Audio</button>
+                <button class="filter-tab" type="button" data-workbench-modality="video">Video</button>
+              </div>
+              <label>
+                Filter
+                <input id="workbenchModelFilter" type="search" placeholder="Model name or provider" />
+              </label>
+            </div>
+            <div class="workbench-model-list" id="workbenchModelList" aria-label="Workbench model list">Loading models...</div>
+            <select id="modelSelect" class="hidden" aria-label="Select model"></select>
           </div>
           <div class="chat-window" id="chatTranscript">
             <div class="message user">Explain what this platform does in one sentence.</div>
@@ -200,8 +226,21 @@
         </div>
 
         <aside class="console-panel">
-          <h3>Project wallet</h3>
+          <div class="workspace-section-head">
+            <h3>Projects</h3>
+            <button class="ghost mini-button" id="createProject" type="button">New</button>
+          </div>
           <div id="projects" class="stack-list">Loading projects...</div>
+
+          <div class="workspace-section-head">
+            <h3>Conversations</h3>
+            <button class="ghost mini-button" id="createConversation" type="button">New</button>
+          </div>
+          <div id="conversations" class="stack-list">Select a project first.</div>
+
+          <h3>Artifacts</h3>
+          <div id="artifacts" class="stack-list">Select a project first.</div>
+
           <h3>API keys</h3>
           <button id="createKey" type="button">Create Dev API Key</button>
           <div id="newKey"></div>

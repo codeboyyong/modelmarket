@@ -10,13 +10,31 @@ type Project = {
   promotional_credits: number;
 };
 
+type Conversation = {
+  id: string;
+  title: string;
+  status: string;
+  message_count: number;
+};
+
+type WorkspaceAsset = {
+  id: string;
+  conversation_id: string;
+  asset_type: string;
+  storage_path: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
 type Model = {
+  id?: string;
   slug: string;
   name: string;
   provider: string;
   modality: string;
   profile_slug: string;
   profile_name: string;
+  status?: string;
 };
 
 type APIKey = {
@@ -51,9 +69,13 @@ let currentProjectID = "";
 let currentAPIKey = "";
 let models: Model[] = [];
 let projects: Project[] = [];
+let conversations: Conversation[] = [];
+let assets: WorkspaceAsset[] = [];
 let signupMode = false;
 let selectedModality = "all";
-const tabs = new Set(["home", "models", "api", "workbench", "admin", "pricing"]);
+let workbenchModality = "image";
+let selectedWorkbenchModel = "";
+const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "pricing"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -141,7 +163,7 @@ async function loadProjects() {
   const [project] = projects;
   if (project) currentProjectID = project.id;
   renderProjects();
-  if (currentProjectID) await loadAPIKeys();
+  if (currentProjectID) await Promise.all([loadAPIKeys(), loadWorkspace()]);
 }
 
 function renderProjects() {
@@ -149,13 +171,74 @@ function renderProjects() {
     projects
       .map((project) => {
         const credits = project.paid_credits + project.promotional_credits;
-        return `<div>
-          <strong>${escapeHTML(project.name)}</strong>
-          <small>${escapeHTML(project.organization)}</small>
+        const active = project.id === currentProjectID ? " active" : "";
+        return `<button class="workspace-row${active}" type="button" data-project-id="${escapeHTML(project.id)}">
+          <span><strong>${escapeHTML(project.name)}</strong><small>${escapeHTML(project.organization)}</small></span>
           <p>${credits.toLocaleString()} credits available</p>
-        </div>`;
+        </button>`;
       })
       .join("") || "<div class=\"empty-state\">No project loaded. Run the dev test data script first.</div>";
+}
+
+async function createProject() {
+  const name = window.prompt("Project name");
+  if (!name?.trim()) return;
+  const data = await request<{ project: Project }>("/api/v1/projects", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() })
+  });
+  projects = [...projects, data.project];
+  currentProjectID = data.project.id;
+  renderProjects();
+  await loadWorkspace();
+}
+
+async function loadWorkspace() {
+  if (!currentProjectID) {
+    conversations = [];
+    assets = [];
+    renderWorkspaceLists();
+    return;
+  }
+  try {
+    const [conversationData, assetData] = await Promise.all([
+      request<{ conversations: Conversation[] }>(`/api/v1/conversations?project_id=${encodeURIComponent(currentProjectID)}`),
+      request<{ assets: WorkspaceAsset[] }>(`/api/v1/assets?project_id=${encodeURIComponent(currentProjectID)}`)
+    ]);
+    conversations = conversationData.conversations;
+    assets = assetData.assets;
+  } catch {
+    conversations = [];
+    assets = [];
+  }
+  renderWorkspaceLists();
+}
+
+function renderWorkspaceLists() {
+  $("conversations").innerHTML =
+    conversations
+      .map((conversation) => `<button class="workspace-row" type="button" data-conversation-id="${escapeHTML(conversation.id)}">
+        <span><strong>${escapeHTML(conversation.title)}</strong><small>${conversation.message_count} messages / ${escapeHTML(conversation.status)}</small></span>
+      </button>`)
+      .join("") || "<div class=\"empty-state\">No conversations yet.</div>";
+  $("artifacts").innerHTML =
+    assets
+      .map((asset) => `<div class="workspace-row">
+        <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
+        <p>${escapeHTML(asset.storage_path)}</p>
+      </div>`)
+      .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
+}
+
+async function createConversation() {
+  if (!currentProjectID) throw new Error("Create or select a project first.");
+  const title = window.prompt("Conversation title") || "New conversation";
+  const data = await request<{ conversation: Conversation }>("/api/v1/conversations", {
+    method: "POST",
+    body: JSON.stringify({ project_id: currentProjectID, title })
+  });
+  conversations = [data.conversation, ...conversations];
+  renderWorkspaceLists();
 }
 
 async function loadModels() {
@@ -172,11 +255,52 @@ async function loadModels() {
 }
 
 function renderModelControls() {
-  const chatModels = models.filter((model) => model.modality === "chat");
+  const usableModels = models.filter((model) => ["image", "audio", "video"].includes(model.modality));
+  if (!usableModels.some((model) => model.modality === workbenchModality)) {
+    workbenchModality = usableModels[0]?.modality || "image";
+  }
+  if (!selectedWorkbenchModel || !models.some((model) => model.profile_slug === selectedWorkbenchModel || model.slug === selectedWorkbenchModel)) {
+    const defaultModel = usableModels.find((model) => model.modality === workbenchModality) || usableModels[0] || models[0];
+    selectedWorkbenchModel = defaultModel ? defaultModel.profile_slug || defaultModel.slug : "mock-chat";
+  }
   $("modelSelect").innerHTML =
-    chatModels
-      .map((model) => `<option value="${escapeHTML(model.profile_slug || model.slug)}">${escapeHTML(model.name)}</option>`)
+    models
+      .map((model) => {
+        const value = model.profile_slug || model.slug;
+        return `<option value="${escapeHTML(value)}"${value === selectedWorkbenchModel ? " selected" : ""}>${escapeHTML(model.name)}</option>`;
+      })
       .join("") || "<option value=\"mock-chat\">Mock Chat</option>";
+  renderWorkbenchModelPicker();
+}
+
+function renderWorkbenchModelPicker() {
+  document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.workbenchModality === workbenchModality);
+  });
+  const query = ($("workbenchModelFilter") as HTMLInputElement).value.trim().toLowerCase();
+  const visible = models.filter((model) => {
+    const matchesModality = model.modality === workbenchModality;
+    const matchesQuery = [model.name, model.slug, model.provider, model.profile_name].join(" ").toLowerCase().includes(query);
+    return matchesModality && matchesQuery;
+  });
+  $("workbenchModelList").innerHTML =
+    visible
+      .map((model) => {
+        const value = model.profile_slug || model.slug;
+        return `<button class="workbench-model-option${value === selectedWorkbenchModel ? " active" : ""}" type="button" data-workbench-model="${escapeHTML(value)}">
+          <span><strong>${escapeHTML(model.name)}</strong><small>${escapeHTML(model.provider)} / ${escapeHTML(model.slug)}</small></span>
+          <span class="tag">${escapeHTML(priceFor(model))}</span>
+        </button>`;
+      })
+      .join("") || "<div class=\"empty-state\">No ${escapeHTML(workbenchModality)} models match the filter.</div>";
+  renderSelectedWorkbenchModel();
+}
+
+function renderSelectedWorkbenchModel() {
+  const selected = models.find((model) => (model.profile_slug || model.slug) === selectedWorkbenchModel);
+  $("selectedModelName").textContent = selected?.name || "No model selected";
+  $("selectedModelModality").textContent = selected?.modality || "-";
+  ($("modelSelect") as HTMLSelectElement).value = selectedWorkbenchModel;
 }
 
 function renderModels() {
@@ -201,7 +325,9 @@ function renderModels() {
       .map((model) => {
         const price = priceFor(model);
         return `<article class="model-card">
-          <div class="model-art"></div>
+          <button class="model-card-button" type="button" data-model-slug="${escapeHTML(model.slug)}" aria-label="Open ${escapeHTML(model.name)} details">
+            <div class="model-art"></div>
+          </button>
           <div class="model-card-body">
             <div class="model-card-head">
               <div>
@@ -215,10 +341,89 @@ function renderModels() {
               <span class="tag">${escapeHTML(price)}</span>
               <span class="tag">${model.profile_slug ? "Profile" : "Mock"}</span>
             </div>
+            <button class="secondary-link model-detail-link" type="button" data-model-slug="${escapeHTML(model.slug)}">View Details</button>
           </div>
         </article>`;
       })
       .join("") || "<div class=\"empty-state\">No models match the current filters.</div>";
+}
+
+function showModelDetail(slug: string) {
+  const model = models.find((item) => item.slug === slug);
+  if (!model) return;
+  $("modelDetailContent").innerHTML = renderModelDetail(model);
+  setActiveTab("model-detail");
+}
+
+function renderModelDetail(model: Model) {
+  const price = priceFor(model);
+  const providerSlug = model.slug.includes("/") ? model.slug.split("/")[0] : model.provider.toLowerCase().replaceAll(" ", "-");
+  const modelName = model.slug.includes("/") ? model.slug.split("/").slice(1).join("/") : model.slug;
+  return `<div class="detail-hero">
+    <div>
+      <p class="eyebrow">${escapeHTML(model.provider)}</p>
+      <h2>${escapeHTML(model.name)}</h2>
+      <p class="detail-slug">${escapeHTML(providerSlug)} / ${escapeHTML(modelName)}</p>
+      <p>${escapeHTML(descriptionFor(model))}</p>
+      <div class="detail-actions">
+        <button type="button" data-tab="workbench">Playground</button>
+        <button class="ghost" type="button" data-copy-model="${escapeHTML(model.profile_slug || model.slug)}">Copy model ID</button>
+      </div>
+    </div>
+    <aside class="detail-stats">
+      <div><strong>${escapeHTML(model.modality)}</strong><small>Modality</small></div>
+      <div><strong>${escapeHTML(price)}</strong><small>Price</small></div>
+      <div><strong>${escapeHTML(model.status || "public")}</strong><small>Status</small></div>
+    </aside>
+  </div>
+  <div class="detail-tabs" aria-label="Model detail sections">
+    <span>Overview</span>
+    <span>Providers</span>
+    <span>Performance</span>
+    <span>Benchmarks</span>
+    <span>Activity</span>
+    <span>Uptime</span>
+    <span>API</span>
+  </div>
+  <div class="detail-grid">
+    <article class="detail-panel">
+      <h3>Overview</h3>
+      <p>${escapeHTML(model.profile_name || "Default profile")} is available through the local marketplace catalog and can be routed through the workbench/API surface.</p>
+      <div class="tag-row">${capabilityTags(model).map((tag) => `<span class="tag">${escapeHTML(tag)}</span>`).join("")}</div>
+    </article>
+    <article class="detail-panel">
+      <h3>Provider routing</h3>
+      <p>Requests route through ${escapeHTML(model.provider)} metadata. Fallback routing, uptime scoring, and provider comparisons are mocked for this detail page.</p>
+      <div class="meta-row"><span><strong>Provider</strong><small>Catalog source</small></span><span>${escapeHTML(model.provider)}</span></div>
+      <div class="meta-row"><span><strong>Profile</strong><small>Default configuration</small></span><span>${escapeHTML(model.profile_slug || "default")}</span></div>
+    </article>
+    <article class="detail-panel detail-api">
+      <h3>API</h3>
+      <pre>{
+  "model": "${escapeHTML(model.profile_slug || model.slug)}",
+  "messages": [
+    { "role": "user", "content": "Generate a result" }
+  ]
+}</pre>
+    </article>
+  </div>`;
+}
+
+function descriptionFor(model: Model) {
+  if (model.slug === "x-ai/grok-imagine-video") {
+    return "Grok Imagine Video is xAI's fast text-, image-, and reference-conditioned video generation model for short clips across common aspect ratios.";
+  }
+  if (model.modality === "video") return `${model.name} generates video from prompt and reference inputs through the marketplace routing layer.`;
+  if (model.modality === "image") return `${model.name} generates images from text and image prompts through the marketplace routing layer.`;
+  if (model.modality === "audio") return `${model.name} supports audio generation or audio-aware workflows through the marketplace routing layer.`;
+  return `${model.name} is available in the marketplace catalog.`;
+}
+
+function capabilityTags(model: Model) {
+  if (model.modality === "video") return ["Text to video", "Image input", "Async job", "Provider routed"];
+  if (model.modality === "image") return ["Text to image", "Image input", "Credit metered", "Provider routed"];
+  if (model.modality === "audio") return ["Audio output", "Prompt input", "Credit metered", "Provider routed"];
+  return ["Chat", "Streaming", "Credit metered"];
 }
 
 function priceFor(model: Model): string {
@@ -253,7 +458,7 @@ async function createKey() {
 
 async function sendPrompt() {
   if (!currentAPIKey) await createKey();
-  const model = ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
+  const model = selectedWorkbenchModel || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
   const prompt = ($("prompt") as HTMLTextAreaElement).value;
   appendMessage("user", prompt);
   const data = await request<ChatResponse>("/api/v1/chat/completions", {
@@ -479,8 +684,44 @@ document.querySelectorAll<HTMLButtonElement>(".social-button").forEach((button) 
   button.addEventListener("click", () => socialLogin(button.dataset.provider || ""));
 });
 $("createKey").addEventListener("click", () => createKey().catch(showError));
+$("createProject").addEventListener("click", () => createProject().catch(showError));
+$("createConversation").addEventListener("click", () => createConversation().catch(showError));
+$("projects").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-project-id]");
+  if (!button) return;
+  currentProjectID = button.dataset.projectId || currentProjectID;
+  renderProjects();
+  loadAPIKeys().catch(showError);
+  loadWorkspace().catch(showError);
+});
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
+$("backToModels").addEventListener("click", () => setActiveTab("models"));
+$("modelsGrid").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-model-slug]");
+  if (button) showModelDetail(button.dataset.modelSlug || "");
+});
+$("modelDetailContent").addEventListener("click", async (event) => {
+  const tabButton = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
+  if (tabButton) setActiveTab(tabButton.dataset.tab || "workbench");
+  const copyButton = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-copy-model]");
+  if (copyButton) await navigator.clipboard?.writeText(copyButton.dataset.copyModel || "");
+});
 $("modelSearch").addEventListener("input", renderModels);
+$("workbenchModelFilter").addEventListener("input", renderWorkbenchModelPicker);
+document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
+  button.addEventListener("click", () => {
+    workbenchModality = button.dataset.workbenchModality || "image";
+    const next = models.find((model) => model.modality === workbenchModality);
+    if (next) selectedWorkbenchModel = next.profile_slug || next.slug;
+    renderWorkbenchModelPicker();
+  });
+});
+$("workbenchModelList").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-workbench-model]");
+  if (!button) return;
+  selectedWorkbenchModel = button.dataset.workbenchModel || selectedWorkbenchModel;
+  renderWorkbenchModelPicker();
+});
 document.querySelectorAll<HTMLButtonElement>("[data-modality]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedModality = button.dataset.modality || "all";
