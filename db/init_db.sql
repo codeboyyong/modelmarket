@@ -10,9 +10,22 @@ CREATE TABLE IF NOT EXISTS sys_users (
   name VARCHAR(255) NOT NULL,
   avatar_url VARCHAR(1024),
   status VARCHAR(64) NOT NULL DEFAULT 'active',
+  password_hash VARCHAR(255),
+  user_type VARCHAR(64) NOT NULL DEFAULT 'individual_consumer',
+  company_id VARCHAR(64),
   ui_theme VARCHAR(32) NOT NULL DEFAULT 'Light',
   language VARCHAR(32) NOT NULL DEFAULT 'EN',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- User table: customer company accounts for corporate admins and members sharing credits.
+CREATE TABLE IF NOT EXISTS user_companies (
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  owner_user_id VARCHAR(64) NOT NULL,
+  status VARCHAR(64) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_companies_owner FOREIGN KEY (owner_user_id) REFERENCES sys_users(id)
 );
 
 -- System table: external OAuth identities linked to application users.
@@ -72,12 +85,14 @@ CREATE TABLE IF NOT EXISTS sys_memberships (
 CREATE TABLE IF NOT EXISTS user_projects (
   id VARCHAR(64) PRIMARY KEY,
   organization_id VARCHAR(64) NOT NULL,
+  company_id VARCHAR(64),
   name VARCHAR(255) NOT NULL,
   slug VARCHAR(255) NOT NULL,
   environment VARCHAR(64) NOT NULL DEFAULT 'dev',
   retention_policy VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_projects_organization FOREIGN KEY (organization_id) REFERENCES sys_organizations(id),
+  CONSTRAINT fk_projects_company FOREIGN KEY (company_id) REFERENCES user_companies(id),
   CONSTRAINT uq_user_project_org_slug UNIQUE (organization_id, slug)
 );
 
@@ -214,11 +229,13 @@ CREATE TABLE IF NOT EXISTS sys_price_rules (
 -- User table: project credit balances for paid and promotional credits.
 CREATE TABLE IF NOT EXISTS user_wallets (
   id VARCHAR(64) PRIMARY KEY,
-  project_id VARCHAR(64) NOT NULL UNIQUE,
+  project_id VARCHAR(64) UNIQUE,
+  company_id VARCHAR(64),
   paid_credits BIGINT NOT NULL DEFAULT 0,
   promotional_credits BIGINT NOT NULL DEFAULT 0,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_wallets_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
+  CONSTRAINT fk_wallets_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT fk_wallets_company FOREIGN KEY (company_id) REFERENCES user_companies(id)
 );
 
 -- User table: immutable credit balance changes for wallet auditability.
@@ -373,6 +390,7 @@ CREATE TABLE IF NOT EXISTS user_embedding_records (
 CREATE TABLE IF NOT EXISTS user_inference_requests (
   id VARCHAR(64) PRIMARY KEY,
   project_id VARCHAR(64) NOT NULL,
+  actor_user_id VARCHAR(64),
   model_slug VARCHAR(255) NOT NULL,
   model_profile_id VARCHAR(64),
   provider_slug VARCHAR(255) NOT NULL,
@@ -385,6 +403,7 @@ CREATE TABLE IF NOT EXISTS user_inference_requests (
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_inference_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT fk_inference_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id),
   CONSTRAINT fk_inference_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id)
 );
 
@@ -407,6 +426,7 @@ CREATE TABLE IF NOT EXISTS user_provider_attempts (
 CREATE TABLE IF NOT EXISTS user_usage_events (
   id VARCHAR(64) PRIMARY KEY,
   project_id VARCHAR(64) NOT NULL,
+  actor_user_id VARCHAR(64),
   inference_request_id VARCHAR(64),
   model_slug VARCHAR(255) NOT NULL,
   provider_slug VARCHAR(255) NOT NULL,
@@ -416,6 +436,7 @@ CREATE TABLE IF NOT EXISTS user_usage_events (
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_usage_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT fk_usage_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id),
   CONSTRAINT fk_usage_inference FOREIGN KEY (inference_request_id) REFERENCES user_inference_requests(id)
 );
 
@@ -511,13 +532,60 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS user_type VARCHAR(64) NOT NULL DEFAULT 'individual_consumer';
+ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
+ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+ALTER TABLE user_projects ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
+ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
+ALTER TABLE user_wallets ALTER COLUMN project_id DROP NOT NULL;
+ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
+ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_projects_company') THEN
+    ALTER TABLE user_projects
+      ADD CONSTRAINT fk_projects_company FOREIGN KEY (company_id) REFERENCES user_companies(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_wallets_company') THEN
+    ALTER TABLE user_wallets
+      ADD CONSTRAINT fk_wallets_company FOREIGN KEY (company_id) REFERENCES user_companies(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_inference_actor') THEN
+    ALTER TABLE user_inference_requests
+      ADD CONSTRAINT fk_inference_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_usage_actor') THEN
+    ALTER TABLE user_usage_events
+      ADD CONSTRAINT fk_usage_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id);
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_user_api_keys_project ON user_api_keys(project_id);
+CREATE INDEX IF NOT EXISTS idx_sys_users_company ON sys_users(company_id);
+CREATE INDEX IF NOT EXISTS idx_user_companies_owner ON user_companies(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_projects_company ON user_projects(company_id);
+CREATE INDEX IF NOT EXISTS idx_user_wallets_company ON user_wallets(company_id);
 CREATE INDEX IF NOT EXISTS idx_sys_models_provider ON sys_models(provider_id);
 CREATE INDEX IF NOT EXISTS idx_sys_model_profiles_model ON sys_model_profiles(model_id);
 CREATE INDEX IF NOT EXISTS idx_user_messages_conversation ON user_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_messages_inference ON user_messages(inference_request_id);
 CREATE INDEX IF NOT EXISTS idx_user_usage_project_created ON user_usage_events(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_usage_actor_created ON user_usage_events(actor_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_project_created ON user_inference_requests(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_inference_actor_created ON user_inference_requests(actor_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_assets_project_created ON user_workspace_assets(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_assets_inference ON user_workspace_assets(inference_request_id);
 CREATE INDEX IF NOT EXISTS idx_sys_audit_org_created ON sys_audit_logs(organization_id, created_at);

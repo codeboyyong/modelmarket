@@ -306,6 +306,40 @@ button:hover,
   gap: 12px;
 }
 
+.account-type-field {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.account-type-field legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.account-type-field label {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 8px 10px;
+  font-weight: 800;
+}
+
+.account-type-field input {
+  width: auto;
+}
+
 .social-login {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 14px;
@@ -1067,6 +1101,10 @@ pre {
 }
 
 .pricing-main-panel {
+  min-width: 0;
+}
+
+.corporate-main-panel {
   min-width: 0;
 }
 

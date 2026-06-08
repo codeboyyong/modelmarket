@@ -115,6 +115,9 @@ type AuthResponse = {
     id: string;
     email: string;
     name: string;
+    user_type?: string;
+    company_id?: string;
+    company_name?: string;
   };
   project_id?: string;
   provider?: string;
@@ -122,6 +125,33 @@ type AuthResponse = {
     access_token: string;
     token_type: string;
   };
+};
+
+type AuthUser = NonNullable<AuthResponse["user"]>;
+
+type CompanyUsageMember = {
+  id: string;
+  email: string;
+  name: string;
+  user_type: string;
+  credits_used: number;
+};
+
+type CompanyUsageModel = {
+  model_slug: string;
+  model: string;
+  modality: string;
+  credits_used: number;
+};
+
+type CompanyUsageResponse = {
+  company: {
+    id: string;
+    name: string;
+  };
+  total_credits: number;
+  members: CompanyUsageMember[];
+  models: CompanyUsageModel[];
 };
 
 const apiBase = (window as Window & { API_BASE_URL?: string }).API_BASE_URL || "http://localhost:8080";
@@ -144,7 +174,7 @@ let conversationPickerOpen = false;
 let currentConversationID = "";
 let currentBranchID = "";
 let branchSourceMessageID = "";
-const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "pricing", "company", "privacy", "terms"]);
+const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -854,6 +884,94 @@ function renderCreditUsageChart(slices: UsageSlice[]) {
     .join("");
 }
 
+async function loadCorporateUsage(user: AuthUser) {
+  if (!isCorporateAdmin(user)) {
+    renderCorporateUsage(null);
+    return;
+  }
+  try {
+    const data = await request<CompanyUsageResponse>(`/api/v1/company-usage?user_id=${encodeURIComponent(user.id)}`);
+    renderCorporateUsage(data);
+  } catch (error) {
+    $("corporateMemberRows").innerHTML = `<tr><td colspan="4">${escapeHTML(error instanceof Error ? error.message : String(error))}</td></tr>`;
+    $("corporateUsageLegend").innerHTML = "";
+    $("corporateUsageChart").innerHTML = "<span>0<small>credits</small></span>";
+  }
+}
+
+function renderCorporateUsage(data: CompanyUsageResponse | null) {
+  if (!data) {
+    $("corporateCompanyName").textContent = "Company usage";
+    $("corporateTotalCredits").textContent = "0";
+    $("corporateMemberCount").textContent = "0";
+    $("corporateTopModality").textContent = "-";
+    $("corporateMemberRows").innerHTML = "<tr><td colspan=\"4\">Login as a corporate admin to load company members.</td></tr>";
+    $("corporateUsageLegend").innerHTML = "";
+    $("corporateUsageChart").style.background = "var(--panel-2)";
+    $("corporateUsageChart").innerHTML = "<span>0<small>credits</small></span>";
+    return;
+  }
+  const models = data.models || [];
+  const members = data.members || [];
+  $("corporateCompanyName").textContent = data.company.name || "Company usage";
+  $("corporateTotalCredits").textContent = `${Number(data.total_credits || 0).toLocaleString()}`;
+  $("corporateMemberCount").textContent = String(members.length);
+  $("corporateTopModality").textContent = topCompanyModality(models);
+  $("corporateMemberRows").innerHTML =
+    members
+      .map((member) => `<tr>
+        <td><strong>${escapeHTML(member.name)}</strong></td>
+        <td>${escapeHTML(formatUserType(member.user_type))}</td>
+        <td>${escapeHTML(member.email)}</td>
+        <td>${Number(member.credits_used || 0).toLocaleString()}</td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No company members found.</td></tr>";
+  renderCorporateUsageChart(models);
+}
+
+function topCompanyModality(models: CompanyUsageModel[]) {
+  const totals = models.reduce<Record<string, number>>((acc, model) => {
+    const modality = model.modality || "unknown";
+    acc[modality] = (acc[modality] || 0) + Number(model.credits_used || 0);
+    return acc;
+  }, {});
+  const [top] = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  return top ? formatUserType(top[0]) : "-";
+}
+
+function renderCorporateUsageChart(models: CompanyUsageModel[]) {
+  const colors = ["#3f8cff", "#12b981", "#f59e0b", "#ec4899", "#8b5cf6"];
+  const total = models.reduce((sum, model) => sum + Number(model.credits_used || 0), 0) || 1;
+  let cursor = 0;
+  const gradient =
+    models.length > 0
+      ? models
+          .map((model, index) => {
+            const start = cursor;
+            cursor += (Number(model.credits_used || 0) / total) * 100;
+            return `${colors[index % colors.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+          })
+          .join(", ")
+      : "var(--panel-2) 0% 100%";
+  $("corporateUsageChart").style.background = `conic-gradient(${gradient})`;
+  $("corporateUsageChart").innerHTML = `<span>${Number(total === 1 && models.length === 0 ? 0 : total).toLocaleString()}<small>credits</small></span>`;
+  $("corporateUsageLegend").innerHTML =
+    models
+      .map((model, index) => {
+        const percent = Math.round((Number(model.credits_used || 0) / total) * 100);
+        return `<div><i style="background:${colors[index % colors.length]}"></i><span>${escapeHTML(model.model)}</span><strong>${percent}%</strong></div>`;
+      })
+      .join("") || "<div>No model usage yet.</div>";
+}
+
+function formatUserType(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 async function loadPricing() {
   try {
     const data = await request<{ pricing: PricingRow[] }>("/api/v1/pricing");
@@ -898,6 +1016,10 @@ function setActiveTab(tab: string) {
   if (window.location.hash.slice(1) !== nextTab) {
     window.history.replaceState(null, "", `#${nextTab}`);
   }
+  if (nextTab === "corporate-admin") {
+    const user = getStoredUser();
+    if (user) void loadCorporateUsage(user);
+  }
 }
 
 function openLogin() {
@@ -914,6 +1036,8 @@ function closeLogin() {
 function setSignupMode(enabled: boolean) {
   signupMode = enabled;
   $("nameField").classList.toggle("hidden", !enabled);
+  $("accountTypeField").classList.toggle("hidden", !enabled);
+  updateSignupCompanyField();
   $("loginModeLabel").textContent = enabled ? "Create account" : "Account";
   $("loginTitle").textContent = enabled ? "Sign up for Model Market" : "Log in to Model Market";
   $("authSubmit").textContent = enabled ? "Create account" : "Login";
@@ -927,8 +1051,10 @@ async function submitAuth(event: SubmitEvent) {
   const username = ($("authUsername") as HTMLInputElement).value.trim();
   const password = ($("authPassword") as HTMLInputElement).value;
   const name = ($("authName") as HTMLInputElement).value.trim();
+  const accountType = selectedSignupAccountType();
+  const companyName = ($("authCompanyName") as HTMLInputElement).value.trim();
   const path = signupMode ? "/api/v1/auth/signup" : "/api/v1/auth/login";
-  const body = signupMode ? { email: username, name, password } : { username, password };
+  const body = signupMode ? { email: username, name, password, account_type: accountType, company_name: companyName } : { username, password };
   $("authMessage").textContent = signupMode ? "Creating account..." : "Logging in...";
   try {
     const auth = await request<AuthResponse>(path, {
@@ -967,33 +1093,59 @@ function completeAuth(auth: AuthResponse, message: string) {
   if (isAdminUser(auth.user)) {
     $("adminUserName").textContent = auth.user.name || auth.user.email;
     setActiveTab("admin");
+  } else if (isCorporateAdmin(auth.user)) {
+    void loadCorporateUsage(auth.user);
+    setActiveTab("corporate-admin");
   }
   window.setTimeout(closeLogin, 550);
 }
 
 function renderAuthUser() {
-  const raw = localStorage.getItem("authUser");
-  if (!raw) {
+  const user = getStoredUser();
+  if (!user) {
     $("loginButton").textContent = "Login";
     $("loginButton").setAttribute("aria-expanded", "false");
+    $("corporateAdminNav").classList.add("hidden");
     closeAccountMenu();
     return;
   }
-  try {
-    const user = JSON.parse(raw) as { name?: string; email?: string };
-    $("loginButton").textContent = user.name || user.email || "Account";
-    if (isAdminUser(user)) {
-      $("adminUserName").textContent = user.name || user.email || "Admin User";
-    }
-  } catch {
-    localStorage.removeItem("authUser");
-    localStorage.removeItem("authSession");
-    renderAuthUser();
+  $("loginButton").textContent = user.name || user.email || "Account";
+  $("corporateAdminNav").classList.toggle("hidden", !isCorporateAdmin(user));
+  if (isAdminUser(user)) {
+    $("adminUserName").textContent = user.name || user.email || "Admin User";
+  }
+  if (isCorporateAdmin(user)) {
+    void loadCorporateUsage(user);
   }
 }
 
-function isAdminUser(user: { id?: string; email?: string }) {
-  return user.id === "user-admin" || user.email === "admin@example.com";
+function getStoredUser(): AuthUser | null {
+  const raw = localStorage.getItem("authUser");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    localStorage.removeItem("authUser");
+    localStorage.removeItem("authSession");
+    return null;
+  }
+}
+
+function selectedSignupAccountType() {
+  return Array.from(document.querySelectorAll<HTMLInputElement>("input[name='accountType']")).find((input) => input.checked)?.value || "individual";
+}
+
+function updateSignupCompanyField() {
+  const isCorporate = signupMode && selectedSignupAccountType() === "corporate";
+  $("companyNameField").classList.toggle("hidden", !isCorporate);
+}
+
+function isAdminUser(user: { id?: string; email?: string; user_type?: string }) {
+  return user.user_type === "sys_admin" || user.id === "user-admin" || user.email === "admin@example.com";
+}
+
+function isCorporateAdmin(user: { user_type?: string }) {
+  return user.user_type === "corporate_admin";
 }
 
 function isSignedIn() {
@@ -1059,6 +1211,9 @@ $("loginModal").addEventListener("click", (event) => {
 });
 $("toggleSignup").addEventListener("click", () => setSignupMode(!signupMode));
 $("loginForm").addEventListener("submit", (event) => submitAuth(event as SubmitEvent));
+document.querySelectorAll<HTMLInputElement>("input[name='accountType']").forEach((input) => {
+  input.addEventListener("change", updateSignupCompanyField);
+});
 document.querySelectorAll<HTMLButtonElement>(".social-button").forEach((button) => {
   button.addEventListener("click", () => socialLogin(button.dataset.provider || ""));
 });

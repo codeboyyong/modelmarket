@@ -104,9 +104,10 @@ func TestDevLogin(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 
-	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+	mock.ExpectQuery("select u.id, u.name, u.user_type").
 		WithArgs("admin@example.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-1", "Admin User", "org-1", "project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "user_type", "coalesce", "coalesce", "id", "id"}).
+			AddRow("user-1", "Admin User", "sys_admin", "", "", "org-1", "project-1"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/dev-login", bytes.NewBufferString(`{"email":"admin@example.com"}`))
 	rec := httptest.NewRecorder()
@@ -126,12 +127,13 @@ func TestPasswordLogin(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 
-	mock.ExpectQuery("select email").
+	mock.ExpectQuery("select email, coalesce").
 		WithArgs("admin@example.com").
-		WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow("admin@example.com"))
-	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+		WillReturnRows(sqlmock.NewRows([]string{"email", "coalesce"}).AddRow("admin@example.com", hashPassword("dev-password")))
+	mock.ExpectQuery("select u.id, u.name, u.user_type").
 		WithArgs("admin@example.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-1", "Admin User", "org-1", "project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "user_type", "coalesce", "coalesce", "id", "id"}).
+			AddRow("user-1", "Admin User", "sys_admin", "", "", "org-1", "project-1"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin@example.com","password":"dev-password"}`))
 	rec := httptest.NewRecorder()
@@ -151,9 +153,10 @@ func TestDevSocialLogin(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 
-	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+	mock.ExpectQuery("select u.id, u.name, u.user_type").
 		WithArgs("developer@example.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-2", "Developer User", "org-1", "project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "user_type", "coalesce", "coalesce", "id", "id"}).
+			AddRow("user-2", "Developer User", "individual_consumer", "", "", "org-1", "project-1"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/social/dev", bytes.NewBufferString(`{"provider":"facebook"}`))
 	rec := httptest.NewRecorder()
@@ -174,14 +177,15 @@ func TestSignup(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectExec("insert into sys_users").
-		WithArgs(sqlmock.AnyArg(), "new@example.com", "New User").
+		WithArgs(sqlmock.AnyArg(), "new@example.com", "New User", hashPassword("dev-password"), "individual_consumer", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into sys_memberships").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "org-demo").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("select u.id, u.name, o.id, p.id").
+	mock.ExpectQuery("select u.id, u.name, u.user_type").
 		WithArgs("new@example.com").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "id", "id"}).AddRow("user-new", "New User", "org-1", "project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "user_type", "coalesce", "coalesce", "id", "id"}).
+			AddRow("user-new", "New User", "individual_consumer", "", "", "org-1", "project-1"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/signup", bytes.NewBufferString(`{"email":"new@example.com","name":"New User","password":"dev-password"}`))
 	rec := httptest.NewRecorder()

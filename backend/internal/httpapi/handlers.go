@@ -99,7 +99,7 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credentials"})
 		return
 	}
-	login, err := a.loginByIdentity(r.Context(), req.Username)
+	email, storedHash, err := a.lookupLoginIdentity(r.Context(), req.Username)
 	if err != nil {
 		if a.Config.DevMode {
 			email := req.Username
@@ -111,6 +111,15 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, devAuthResponse(email, name))
 			return
 		}
+		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
+		return
+	}
+	if storedHash != "" && storedHash != hashPassword(req.Password) {
+		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
+		return
+	}
+	login, err := a.loginByEmail(r.Context(), email)
+	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
@@ -156,9 +165,11 @@ func (a *App) devSocialLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"`
-		Name     string `json:"name"`
-		Password string `json:"password"`
+		Email       string `json:"email"`
+		Name        string `json:"name"`
+		Password    string `json:"password"`
+		AccountType string `json:"account_type"`
+		CompanyName string `json:"company_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
@@ -166,6 +177,8 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
+	req.AccountType = strings.ToLower(strings.TrimSpace(req.AccountType))
+	req.CompanyName = strings.TrimSpace(req.CompanyName)
 	if req.Email == "" || req.Password == "" {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_signup_fields"})
 		return
@@ -173,11 +186,36 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = strings.Split(req.Email, "@")[0]
 	}
+	userType := "individual_consumer"
+	orgID := "org-demo"
+	var companyID *string
+	if req.AccountType == "corporate" || req.AccountType == "corporate_member" {
+		if req.CompanyName == "" {
+			writeJSON(w, http.StatusBadRequest, response{"error": "missing_company_name"})
+			return
+		}
+		var foundCompanyID, foundOrgID string
+		err := a.DB.QueryRowContext(r.Context(), `
+			select c.id, p.organization_id
+			from user_companies c
+			join user_projects p on p.company_id = c.id
+			where lower(c.name) = lower($1)
+			order by p.created_at asc
+			limit 1`, req.CompanyName).Scan(&foundCompanyID, &foundOrgID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, response{"error": "company_not_found"})
+			return
+		}
+		userType = "corporate_member"
+		companyID = &foundCompanyID
+		orgID = foundOrgID
+	}
+
 	userID := "user_" + randomHex(8)
 	membershipID := "membership_" + randomHex(8)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into sys_users(id, email, name, avatar_url, status, ui_theme, language)
-		values($1, $2, $3, null, 'active', 'Light', 'EN')`, userID, req.Email, req.Name)
+		insert into sys_users(id, email, name, avatar_url, status, password_hash, user_type, company_id, ui_theme, language)
+		values($1, $2, $3, null, 'active', $4, $5, $6, 'Light', 'EN')`, userID, req.Email, req.Name, hashPassword(req.Password), userType, companyID)
 	if err != nil {
 		if a.Config.DevMode {
 			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
@@ -188,7 +226,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into sys_memberships(id, user_id, organization_id, role)
-		values($1, $2, 'org-demo', 'developer')`, membershipID, userID)
+		values($1, $2, $3, 'developer')`, membershipID, userID, orgID)
 	if err != nil {
 		if a.Config.DevMode {
 			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
@@ -209,35 +247,38 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, login)
 }
 
-func (a *App) loginByIdentity(ctx context.Context, identity string) (response, error) {
+func (a *App) lookupLoginIdentity(ctx context.Context, identity string) (string, string, error) {
 	var email string
+	var passwordHash sql.NullString
 	err := a.DB.QueryRowContext(ctx, `
-		select email
+		select email, coalesce(password_hash, '')
 		from sys_users
 		where lower(email) = lower($1) or lower(name) = lower($1)
-		limit 1`, identity).Scan(&email)
+		limit 1`, identity).Scan(&email, &passwordHash)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
-	return a.loginByEmail(ctx, email)
+	return email, passwordHash.String, nil
 }
 
 func (a *App) loginByEmail(ctx context.Context, email string) (response, error) {
-	var userID, orgID, projectID, name string
+	var userID, orgID, projectID, name, userType string
+	var companyID, companyName sql.NullString
 	err := a.DB.QueryRowContext(ctx, `
-		select u.id, u.name, o.id, p.id
+		select u.id, u.name, u.user_type, coalesce(u.company_id, ''), coalesce(c.name, ''), o.id, p.id
 		from sys_users u
 		join sys_memberships m on m.user_id = u.id
 		join sys_organizations o on o.id = m.organization_id
 		join user_projects p on p.organization_id = o.id
+		left join user_companies c on c.id = u.company_id
 		where u.email = $1
 		order by p.created_at asc
-		limit 1`, email).Scan(&userID, &name, &orgID, &projectID)
+		limit 1`, email).Scan(&userID, &name, &userType, &companyID, &companyName, &orgID, &projectID)
 	if err != nil {
 		return nil, err
 	}
 	return response{
-		"user":            response{"id": userID, "email": email, "name": name},
+		"user":            authUserResponse(userID, email, name, userType, companyID.String, companyName.String),
 		"organization_id": orgID,
 		"project_id":      projectID,
 		"session":         response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"},
@@ -249,16 +290,22 @@ func devAuthResponse(email, name string) response {
 		name = "Dev User"
 	}
 	userID := "user-dev-fallback"
+	userType := "individual_consumer"
 	if strings.EqualFold(email, "admin@example.com") {
 		userID = "user-admin"
+		userType = "sys_admin"
 	}
 	return response{
-		"user":            response{"id": userID, "email": email, "name": name},
+		"user":            authUserResponse(userID, email, name, userType, "", ""),
 		"organization_id": "org-demo",
 		"project_id":      "project-demo",
 		"session":         response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"},
 		"dev_fallback":    true,
 	}
+}
+
+func authUserResponse(id, email, name, userType, companyID, companyName string) response {
+	return response{"id": id, "email": email, "name": name, "user_type": userType, "company_id": companyID, "company_name": companyName}
 }
 
 func (a *App) models(w http.ResponseWriter, r *http.Request) {
@@ -326,12 +373,99 @@ func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"pricing": items})
 }
 
+func (a *App) companyUsage(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_user_id"})
+		return
+	}
+
+	var companyID, companyName, userType string
+	err := a.DB.QueryRowContext(r.Context(), `
+		select coalesce(u.company_id, ''), coalesce(c.name, ''), u.user_type
+		from sys_users u
+		left join user_companies c on c.id = u.company_id
+		where u.id = $1`, userID).Scan(&companyID, &companyName, &userType)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
+		return
+	}
+	if companyID == "" || userType != "corporate_admin" {
+		writeJSON(w, http.StatusForbidden, response{"error": "corporate_admin_required"})
+		return
+	}
+
+	members, totalCredits, err := a.companyUsageMembers(r.Context(), companyID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	models, err := a.companyUsageModels(r.Context(), companyID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"company": response{"id": companyID, "name": companyName}, "total_credits": totalCredits, "members": members, "models": models})
+}
+
+func (a *App) companyUsageMembers(ctx context.Context, companyID string) ([]response, int64, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select u.id, u.email, u.name, u.user_type, coalesce(sum(ue.customer_charge), 0)
+		from sys_users u
+		left join user_usage_events ue on ue.actor_user_id = u.id
+		where u.company_id = $1
+		group by u.id, u.email, u.name, u.user_type
+		order by coalesce(sum(ue.customer_charge), 0) desc, u.name`, companyID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := []response{}
+	var total int64
+	for rows.Next() {
+		var id, email, name, userType string
+		var credits int64
+		if err := rows.Scan(&id, &email, &name, &userType, &credits); err != nil {
+			return nil, 0, err
+		}
+		total += credits
+		items = append(items, response{"id": id, "email": email, "name": name, "user_type": userType, "credits_used": credits})
+	}
+	return items, total, rows.Err()
+}
+
+func (a *App) companyUsageModels(ctx context.Context, companyID string) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select ue.model_slug, coalesce(m.name, ue.model_slug), coalesce(m.modality, ''), sum(ue.customer_charge)
+		from user_usage_events ue
+		join sys_users u on u.id = ue.actor_user_id
+		left join sys_models m on m.slug = ue.model_slug
+		where u.company_id = $1
+		group by ue.model_slug, m.name, m.modality
+		order by sum(ue.customer_charge) desc`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var slug, name, modality string
+		var credits int64
+		if err := rows.Scan(&slug, &name, &modality, &credits); err != nil {
+			return nil, err
+		}
+		items = append(items, response{"model_slug": slug, "model": name, "modality": modality, "credits_used": credits})
+	}
+	return items, rows.Err()
+}
+
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
 		from user_projects p
 		join sys_organizations o on o.id = p.organization_id
 		left join user_wallets w on w.project_id = p.id
+			or (p.company_id is not null and w.company_id = p.company_id and w.project_id is null)
 		left join (
 			select project_id, sum(customer_charge) as credits_used
 			from user_usage_events
@@ -938,6 +1072,11 @@ func randomHex(bytesLen int) string {
 }
 
 func hashAPIKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func hashPassword(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }

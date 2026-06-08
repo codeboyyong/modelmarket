@@ -17,6 +17,7 @@
           <button class="tab-link" type="button" data-tab="models">Models</button>
           <button class="tab-link" type="button" data-tab="workbench">Workbench</button>
           <button class="tab-link" type="button" data-tab="pricing">Pricing</button>
+          <button class="tab-link hidden" id="corporateAdminNav" type="button" data-tab="corporate-admin">Company Admin</button>
           <a class="nav-link" href="#resources">Documentations</a>
         </nav>
         <div class="nav-actions">
@@ -63,6 +64,21 @@
             <label id="nameField" class="hidden">
               Name
               <input id="authName" type="text" autocomplete="name" placeholder="Your name" />
+            </label>
+            <fieldset id="accountTypeField" class="account-type-field hidden">
+              <legend>Account type</legend>
+              <label>
+                <input type="radio" name="accountType" value="individual" checked />
+                Individual
+              </label>
+              <label>
+                <input type="radio" name="accountType" value="corporate" />
+                Corporate user
+              </label>
+            </fieldset>
+            <label id="companyNameField" class="hidden">
+              Company name
+              <input id="authCompanyName" type="text" autocomplete="organization" placeholder="Acme Creative Studio" />
             </label>
             <label>
               Email or username
@@ -299,6 +315,53 @@
           </div>
           <div id="metadataRows" class="admin-table">Loading metadata...</div>
         </article>
+      </section>
+
+      <section class="admin-pricing tab-panel" id="corporateAdmin" data-panel="corporate-admin">
+        <article class="admin-panel corporate-main-panel">
+          <p class="eyebrow">Company Admin</p>
+          <h2 id="corporateCompanyName">Company usage</h2>
+          <p>Review team members, shared credit consumption, and model usage for the company account.</p>
+          <div class="admin-summary">
+            <div>
+              <strong id="corporateTotalCredits">0</strong>
+              <small>Total credits used</small>
+            </div>
+            <div>
+              <strong id="corporateMemberCount">0</strong>
+              <small>Members</small>
+            </div>
+            <div>
+              <strong id="corporateTopModality">-</strong>
+              <small>Top modality</small>
+            </div>
+          </div>
+          <div class="pricing-table-wrap">
+            <table class="pricing-table">
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th>Type</th>
+                  <th>Email</th>
+                  <th>Credits used</th>
+                </tr>
+              </thead>
+              <tbody id="corporateMemberRows">
+                <tr><td colspan="4">Login as a corporate admin to load company members.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <aside class="admin-panel credit-panel">
+          <div class="credit-panel-head">
+            <div>
+              <p class="eyebrow">Distribution</p>
+              <h2>Model usage</h2>
+            </div>
+          </div>
+          <div id="corporateUsageChart" class="pie-chart" role="img" aria-label="Company model usage chart"></div>
+          <div id="corporateUsageLegend" class="usage-legend"></div>
+        </aside>
       </section>
 
       <section class="admin-pricing tab-panel" id="pricing" data-panel="pricing">

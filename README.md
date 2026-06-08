@@ -19,6 +19,7 @@ The product direction is documented in:
 - [system_requirement.md](system_requirement.md)
 - [system_design.md](system_design.md)
 - [implementation_plan.md](implementation_plan.md)
+- [docs/demo-accounts.md](docs/demo-accounts.md)
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
@@ -137,6 +138,33 @@ By default the scripts use:
 - `db/populate_test_data.sql`
 
 For `dev`, `test`, and `local`, `scripts/init_db.sh` resets the schema before recreating it. The test-data script clears existing dev test rows before inserting, so it can be rerun in a development database.
+
+## Demo Accounts
+
+After running `scripts/populate_test_data.sh dev`, these local demo accounts are available:
+
+```text
+System admin
+Username: admin@example.com
+Password: dev-password
+
+Individual consumer
+Username: developer@example.com
+Password: dev-password
+
+Corporate admin
+Username: corp-admin@example.com
+Password: dev-password
+Company: Acme Creative Studio
+```
+
+Corporate admins can open the `Company Admin` view after login to review company members, shared credit usage, and model distribution.
+
+For signup testing, choose `Corporate user` and enter this company name to attach the new user to the seeded company:
+
+```text
+Acme Creative Studio
+```
 
 ## Manual Backend Run
 

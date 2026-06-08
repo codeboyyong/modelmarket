@@ -1,44 +1,45 @@
 -- Portable deterministic test data for Model Market.
 -- IDs are explicit so this file does not require database-specific UUID functions.
 
--- DELETE FROM sys_provider_settlements;
--- DELETE FROM sys_audit_logs;
--- DELETE FROM user_webhook_endpoints;
--- DELETE FROM user_budget_policies;
--- DELETE FROM user_routing_policies;
--- DELETE FROM user_async_jobs;
--- DELETE FROM user_usage_events;
--- DELETE FROM user_provider_attempts;
--- DELETE FROM user_embedding_records;
--- DELETE FROM user_file_extractions;
--- DELETE FROM user_message_attachments;
--- DELETE FROM user_workspace_assets;
--- DELETE FROM user_messages;
--- DELETE FROM user_inference_requests;
--- DELETE FROM user_conversation_branches;
--- DELETE FROM user_conversations;
--- DELETE FROM sys_coupons;
--- DELETE FROM user_invoices;
--- DELETE FROM user_payments;
--- DELETE FROM user_ledger_transactions;
--- DELETE FROM user_wallets;
--- DELETE FROM sys_price_rules;
--- DELETE FROM sys_pricing_plans;
--- DELETE FROM sys_model_configurations;
--- DELETE FROM sys_model_profiles;
--- DELETE FROM sys_model_versions;
--- DELETE FROM sys_models;
--- DELETE FROM sys_capabilities;
--- DELETE FROM sys_provider_endpoints;
--- DELETE FROM sys_providers;
--- DELETE FROM user_api_keys;
--- DELETE FROM user_projects;
--- DELETE FROM sys_memberships;
--- DELETE FROM sys_organizations;
--- DELETE FROM sys_sessions;
--- DELETE FROM sys_oauth_accounts;
--- DELETE FROM sys_users;
--- DELETE FROM sys_roles;
+DELETE FROM sys_provider_settlements;
+DELETE FROM sys_audit_logs;
+DELETE FROM user_webhook_endpoints;
+DELETE FROM user_budget_policies;
+DELETE FROM user_routing_policies;
+DELETE FROM user_async_jobs;
+DELETE FROM user_usage_events;
+DELETE FROM user_provider_attempts;
+DELETE FROM user_embedding_records;
+DELETE FROM user_file_extractions;
+DELETE FROM user_message_attachments;
+DELETE FROM user_workspace_assets;
+DELETE FROM user_messages;
+DELETE FROM user_inference_requests;
+DELETE FROM user_conversation_branches;
+DELETE FROM user_conversations;
+DELETE FROM sys_coupons;
+DELETE FROM user_invoices;
+DELETE FROM user_payments;
+DELETE FROM user_ledger_transactions;
+DELETE FROM user_wallets;
+DELETE FROM sys_price_rules;
+DELETE FROM sys_pricing_plans;
+DELETE FROM sys_model_configurations;
+DELETE FROM sys_model_profiles;
+DELETE FROM sys_model_versions;
+DELETE FROM sys_models;
+DELETE FROM sys_capabilities;
+DELETE FROM sys_provider_endpoints;
+DELETE FROM sys_providers;
+DELETE FROM user_api_keys;
+DELETE FROM user_projects;
+DELETE FROM user_companies;
+DELETE FROM sys_memberships;
+DELETE FROM sys_organizations;
+DELETE FROM sys_sessions;
+DELETE FROM sys_oauth_accounts;
+DELETE FROM sys_users;
+DELETE FROM sys_roles;
 
 INSERT INTO sys_roles (id, name, description) VALUES
   ('role-owner', 'owner', 'Organization owner'),
@@ -46,31 +47,46 @@ INSERT INTO sys_roles (id, name, description) VALUES
   ('role-developer', 'developer', 'Developer user'),
   ('role-readonly', 'readonly', 'Read-only user');
 
-INSERT INTO sys_users (id, email, name, avatar_url, status, ui_theme, language) VALUES
-  ('user-admin', 'admin@example.com', 'Admin User', NULL, 'active', 'Light', 'EN'),
-  ('user-developer', 'developer@example.com', 'Developer User', NULL, 'active', 'Light', 'EN');
+INSERT INTO sys_users (id, email, name, avatar_url, status, password_hash, user_type, company_id, ui_theme, language) VALUES
+  ('user-admin', 'admin@example.com', 'Admin User', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'sys_admin', NULL, 'Light', 'EN'),
+  ('user-developer', 'developer@example.com', 'Developer User', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'individual_consumer', NULL, 'Light', 'EN'),
+  ('user-corp-admin', 'corp-admin@example.com', 'Corporate Admin', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_admin', 'company-acme', 'Light', 'EN'),
+  ('user-corp-designer', 'designer@acme.example', 'Acme Designer', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_member', 'company-acme', 'Light', 'EN'),
+  ('user-corp-producer', 'producer@acme.example', 'Acme Producer', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_member', 'company-acme', 'Light', 'EN');
+
+INSERT INTO user_companies (id, name, owner_user_id, status) VALUES
+  ('company-acme', 'Acme Creative Studio', 'user-corp-admin', 'active');
 
 INSERT INTO sys_oauth_accounts (id, user_id, provider, provider_account_id, email, display_name) VALUES
   ('oauth-google-admin', 'user-admin', 'google', 'google-admin-dev', 'admin@example.com', 'Admin User'),
   ('oauth-github-admin', 'user-admin', 'github', 'github-admin-dev', 'admin@example.com', 'Admin User'),
-  ('oauth-facebook-dev', 'user-developer', 'facebook', 'facebook-dev-dev', 'developer@example.com', 'Developer User');
+  ('oauth-facebook-dev', 'user-developer', 'facebook', 'facebook-dev-dev', 'developer@example.com', 'Developer User'),
+  ('oauth-google-corp-admin', 'user-corp-admin', 'google', 'google-corp-admin-dev', 'corp-admin@example.com', 'Corporate Admin');
 
 INSERT INTO sys_organizations (id, name, slug, status) VALUES
-  ('org-demo', 'Demo Organization', 'demo-org', 'active');
+  ('org-demo', 'Demo Organization', 'demo-org', 'active'),
+  ('org-acme', 'Acme Creative Studio', 'acme-creative-studio', 'active');
 
 INSERT INTO sys_memberships (id, user_id, organization_id, role) VALUES
   ('membership-admin', 'user-admin', 'org-demo', 'owner'),
-  ('membership-developer', 'user-developer', 'org-demo', 'developer');
+  ('membership-developer', 'user-developer', 'org-demo', 'developer'),
+  ('membership-corp-admin', 'user-corp-admin', 'org-acme', 'owner'),
+  ('membership-corp-designer', 'user-corp-designer', 'org-acme', 'developer'),
+  ('membership-corp-producer', 'user-corp-producer', 'org-acme', 'developer');
 
-INSERT INTO user_projects (id, organization_id, name, slug, environment, retention_policy) VALUES
-  ('project-demo', 'org-demo', 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}'),
-  ('project-image-studio', 'org-demo', 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
-  ('project-video-lab', 'org-demo', 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":30,"asset_days":30}');
+INSERT INTO user_projects (id, organization_id, company_id, name, slug, environment, retention_policy) VALUES
+  ('project-demo', 'org-demo', NULL, 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}'),
+  ('project-image-studio', 'org-demo', NULL, 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
+  ('project-video-lab', 'org-demo', NULL, 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
+  ('project-acme-brand', 'org-acme', 'company-acme', 'Acme Brand Studio', 'acme-brand-studio', 'dev', '{"conversation_days":90,"asset_days":90}'),
+  ('project-acme-video', 'org-acme', 'company-acme', 'Acme Video Team', 'acme-video-team', 'dev', '{"conversation_days":90,"asset_days":90}');
 
 INSERT INTO user_api_keys (id, project_id, name, prefix, key_hash, scopes, status) VALUES
   ('api-key-demo', 'project-demo', 'Seeded development key', 'mk_seeded', 'seeded-key-hash-replace-before-real-use', 'models:read,chat:create', 'active'),
   ('api-key-image-studio', 'project-image-studio', 'Image Studio demo key', 'mk_imgdemo', 'image-studio-demo-key-hash', 'models:read,chat:create', 'active'),
-  ('api-key-video-lab', 'project-video-lab', 'Video Lab demo key', 'mk_viddemo', 'video-lab-demo-key-hash', 'models:read,chat:create', 'active');
+  ('api-key-video-lab', 'project-video-lab', 'Video Lab demo key', 'mk_viddemo', 'video-lab-demo-key-hash', 'models:read,chat:create', 'active'),
+  ('api-key-acme-brand', 'project-acme-brand', 'Acme Brand demo key', 'mk_acmebr', 'acme-brand-demo-key-hash', 'models:read,chat:create', 'active'),
+  ('api-key-acme-video', 'project-acme-video', 'Acme Video demo key', 'mk_acmevd', 'acme-video-demo-key-hash', 'models:read,chat:create', 'active');
 
 INSERT INTO sys_providers (id, slug, name, status, endpoint_url, credential_ref, metadata) VALUES
   ('provider-mock', 'mock-provider', 'Mock Provider', 'active', 'mock://provider', NULL, '{"mode":"dev","supports_streaming":true}'),
@@ -185,10 +201,11 @@ INSERT INTO sys_price_rules (
   ('price-openrouter-gpt-audio-audio', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 0.0025, '1k_tokens', 0.01, '1k_tokens', 0.0025, '1k_tokens', 0.01, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.000032"}'),
   ('price-openrouter-gpt-audio-mini-audio', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.0000006"}');
 
-INSERT INTO user_wallets (id, project_id, paid_credits, promotional_credits) VALUES
-  ('wallet-demo', 'project-demo', 10000, 5000),
-  ('wallet-image-studio', 'project-image-studio', 2500, 1500),
-  ('wallet-video-lab', 'project-video-lab', 5000, 2000);
+INSERT INTO user_wallets (id, project_id, company_id, paid_credits, promotional_credits) VALUES
+  ('wallet-demo', 'project-demo', NULL, 10000, 5000),
+  ('wallet-image-studio', 'project-image-studio', NULL, 2500, 1500),
+  ('wallet-video-lab', 'project-video-lab', NULL, 5000, 2000),
+  ('wallet-acme-company', NULL, 'company-acme', 125000, 25000);
 
 INSERT INTO user_ledger_transactions (id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) VALUES
   ('ledger-dev-paid', 'wallet-demo', 'grant', 10000, 'paid', 'posted', 'dev seed paid credits', 'dev-seed-paid-credit-grant', '{}'),
@@ -202,7 +219,9 @@ INSERT INTO user_conversations (id, project_id, title, status) VALUES
   ('conversation-image-product', 'project-image-studio', 'Product hero image concepts', 'active'),
   ('conversation-image-avatar', 'project-image-studio', 'Avatar style exploration', 'active'),
   ('conversation-video-launch', 'project-video-lab', 'Launch teaser storyboard', 'active'),
-  ('conversation-video-social', 'project-video-lab', 'Short social clip variants', 'active');
+  ('conversation-video-social', 'project-video-lab', 'Short social clip variants', 'active'),
+  ('conversation-acme-campaign', 'project-acme-brand', 'Corporate campaign concepts', 'active'),
+  ('conversation-acme-training-video', 'project-acme-video', 'Training video drafts', 'active');
 
 INSERT INTO user_conversation_branches (id, conversation_id, parent_branch_id, name) VALUES
   ('branch-demo-main', 'conversation-demo', NULL, 'Main'),
@@ -211,7 +230,9 @@ INSERT INTO user_conversation_branches (id, conversation_id, parent_branch_id, n
   ('branch-image-product-minimal', 'conversation-image-product', 'branch-image-product-main', 'Minimal white-background version'),
   ('branch-image-avatar-main', 'conversation-image-avatar', NULL, 'Main'),
   ('branch-video-launch-main', 'conversation-video-launch', NULL, 'Main'),
-  ('branch-video-social-main', 'conversation-video-social', NULL, 'Main');
+  ('branch-video-social-main', 'conversation-video-social', NULL, 'Main'),
+  ('branch-acme-campaign-main', 'conversation-acme-campaign', NULL, 'Main'),
+  ('branch-acme-training-main', 'conversation-acme-training-video', NULL, 'Main');
 
 INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata) VALUES
   ('message-demo-user', 'conversation-demo', 'branch-demo-main', 'user', 'What can I do in this model market?', NULL, NULL, 0, 0, '{}'),
@@ -227,7 +248,11 @@ INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_
   ('message-video-launch-user', 'conversation-video-launch', 'branch-video-launch-main', 'user', 'Draft a 10 second launch teaser showing model routing from prompt to final video.', NULL, NULL, 0, 0, '{}'),
   ('message-video-launch-assistant', 'conversation-video-launch', 'branch-video-launch-main', 'assistant', 'Prepared a storyboard with three shots: prompt entry, routing visualization, and generated clip preview with synchronized captions.', 'profile-openrouter-veo-31-fast-default', NULL, 100, 10, '{"provider":"openrouter","artifact":"asset-video-launch-storyboard"}'),
   ('message-video-social-user', 'conversation-video-social', 'branch-video-social-main', 'user', 'Make short social variants for image, audio, and video generation features.', NULL, NULL, 0, 0, '{}'),
-  ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","artifact":"asset-video-social-variants"}');
+  ('message-video-social-assistant', 'conversation-video-social', 'branch-video-social-main', 'assistant', 'Created three vertical clip concepts with fast cuts, concise feature callouts, and model cards animated into the frame.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","artifact":"asset-video-social-variants"}'),
+  ('message-acme-campaign-user', 'conversation-acme-campaign', 'branch-acme-campaign-main', 'user', 'Create a polished image concept for Acme corporate brand refresh.', NULL, NULL, 0, 0, '{"actor_user_id":"user-corp-designer"}'),
+  ('message-acme-campaign-assistant', 'conversation-acme-campaign', 'branch-acme-campaign-main', 'assistant', 'Generated a brand refresh concept with a clean product scene, bright typography space, and a professional enterprise tone.', 'profile-openrouter-mai-image-25-default', NULL, 10, 0, '{"provider":"openrouter","actor_user_id":"user-corp-designer"}'),
+  ('message-acme-training-user', 'conversation-acme-training-video', 'branch-acme-training-main', 'user', 'Draft a short onboarding video for sales enablement training.', NULL, NULL, 0, 0, '{"actor_user_id":"user-corp-producer"}'),
+  ('message-acme-training-assistant', 'conversation-acme-training-video', 'branch-acme-training-main', 'assistant', 'Prepared a 12 second training video structure with intro title, workflow demonstration, and a closing action slide.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","actor_user_id":"user-corp-producer"}');
 
 INSERT INTO user_workspace_assets (
   id, project_id, conversation_id, asset_type, storage_path, storage_provider, bucket_name, object_key, download_url,
@@ -237,7 +262,9 @@ INSERT INTO user_workspace_assets (
   ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 's3://model-market-dev-assets/project-image-studio/generated/product-hero.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/product-hero.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
   ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 's3://model-market-dev-assets/project-image-studio/generated/avatar-style-board.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/avatar-style-board.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
   ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 's3://model-market-dev-assets/project-video-lab/generated/launch-teaser-storyboard.json', 's3', 'model-market-dev-assets', 'project-video-lab/generated/launch-teaser-storyboard.json', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
-  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 's3://model-market-dev-assets/project-video-lab/generated/social-variants.mp4', 's3', 'model-market-dev-assets', 'project-video-lab/generated/social-variants.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}');
+  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 's3://model-market-dev-assets/project-video-lab/generated/social-variants.mp4', 's3', 'model-market-dev-assets', 'project-video-lab/generated/social-variants.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}'),
+  ('asset-acme-campaign-image', 'project-acme-brand', 'conversation-acme-campaign', 'image', 's3://model-market-dev-assets/project-acme-brand/generated/campaign-concept.png', 's3', 'model-market-dev-assets', 'project-acme-brand/generated/campaign-concept.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-brand/generated/campaign-concept.png', 'image/png', 1887436, NULL, 10, 0, '{"actor_user_id":"user-corp-designer","prompt":"corporate brand refresh"}'),
+  ('asset-acme-training-video', 'project-acme-video', 'conversation-acme-training-video', 'video', 's3://model-market-dev-assets/project-acme-video/generated/training-draft.mp4', 's3', 'model-market-dev-assets', 'project-acme-video/generated/training-draft.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-video/generated/training-draft.mp4', 'video/mp4', 8388608, NULL, 70, 7, '{"actor_user_id":"user-corp-producer","duration_seconds":12}');
 
 INSERT INTO user_message_attachments (id, message_id, asset_id) VALUES
   ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');
@@ -248,19 +275,21 @@ INSERT INTO user_file_extractions (id, asset_id, extracted_text, metadata) VALUE
 INSERT INTO user_embedding_records (id, project_id, source_type, source_id, embedding_model, vector_ref, metadata) VALUES
   ('embedding-demo-text', 'project-demo', 'asset', 'asset-demo-text', 'mock-embedding', 'mock://vectors/embedding-demo-text', '{}');
 
-INSERT INTO user_inference_requests (id, project_id, model_slug, model_profile_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
-  ('inference-demo', 'project-demo', 'mock-chat', 'profile-mock-chat-default', 'mock-provider', 'succeeded', 12, 24, 1, 0, 1, '{"mock":true}');
+INSERT INTO user_inference_requests (id, project_id, actor_user_id, model_slug, model_profile_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
+  ('inference-demo', 'project-demo', 'user-admin', 'mock-chat', 'profile-mock-chat-default', 'mock-provider', 'succeeded', 12, 24, 1, 0, 1, '{"mock":true}');
 
 INSERT INTO user_provider_attempts (id, inference_request_id, provider_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
   ('attempt-demo', 'inference-demo', 'provider-mock', 'succeeded', 42, 'mock-request-1', NULL, '{}');
 
-INSERT INTO user_usage_events (id, project_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) VALUES
-  ('usage-demo', 'project-demo', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 1, 0, '{"mock":true}'),
-  ('usage-image-product-main', 'project-image-studio', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-main"}'),
-  ('usage-image-product-dark', 'project-image-studio', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-dark"}'),
-  ('usage-image-avatar', 'project-image-studio', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-avatar"}'),
-  ('usage-video-launch', 'project-video-lab', NULL, 'google/veo-3.1-fast', 'openrouter', 'video_generation', 100, 10, '{"conversation_id":"conversation-video-launch"}'),
-  ('usage-video-social', 'project-video-lab', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"conversation_id":"conversation-video-social"}');
+INSERT INTO user_usage_events (id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) VALUES
+  ('usage-demo', 'project-demo', 'user-admin', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 1, 0, '{"mock":true}'),
+  ('usage-image-product-main', 'project-image-studio', 'user-developer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-main"}'),
+  ('usage-image-product-dark', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-dark"}'),
+  ('usage-image-avatar', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-avatar"}'),
+  ('usage-video-launch', 'project-video-lab', 'user-developer', NULL, 'google/veo-3.1-fast', 'openrouter', 'video_generation', 100, 10, '{"conversation_id":"conversation-video-launch"}'),
+  ('usage-video-social', 'project-video-lab', 'user-developer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"conversation_id":"conversation-video-social"}'),
+  ('usage-acme-campaign-image', 'project-acme-brand', 'user-corp-designer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"company_id":"company-acme","conversation_id":"conversation-acme-campaign"}'),
+  ('usage-acme-training-video', 'project-acme-video', 'user-corp-producer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"company_id":"company-acme","conversation_id":"conversation-acme-training-video"}');
 
 INSERT INTO user_async_jobs (id, project_id, job_type, status, model_slug, provider_slug, metadata) VALUES
   ('job-demo-image', 'project-demo', 'image_generation', 'completed', 'mock-creative', 'mock-provider', '{"mock":true}');
