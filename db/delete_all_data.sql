@@ -38,4 +38,5 @@ DELETE FROM sys_organizations;
 DELETE FROM sys_sessions;
 DELETE FROM sys_oauth_accounts;
 DELETE FROM sys_users;
+DELETE FROM sys_config;
 DELETE FROM sys_roles;

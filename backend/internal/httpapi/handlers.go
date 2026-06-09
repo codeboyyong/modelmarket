@@ -621,6 +621,121 @@ func parseRangeDays(value string) int {
 	}
 }
 
+func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID        string `json:"user_id"`
+		Credits       int64  `json:"credits"`
+		PaymentMethod string `json:"payment_method"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.PaymentMethod = strings.TrimSpace(req.PaymentMethod)
+	if req.UserID == "" {
+		req.UserID = "user-yong-zhao"
+	}
+	if req.Credits <= 0 {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_credit_amount"})
+		return
+	}
+	userID, err := a.resolveUsageUserID(r.Context(), req.UserID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
+		return
+	}
+	if req.PaymentMethod == "" {
+		req.PaymentMethod = "credit_card"
+	}
+	ratio, err := a.creditRatio(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	amountCents := int64(float64(req.Credits) / ratio * 100)
+	walletID, err := a.walletForUser(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	tx, err := a.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	defer tx.Rollback()
+	purchaseID := "purchase_" + randomHex(8)
+	paymentID := "payment_" + randomHex(8)
+	ledgerID := "ledger_" + randomHex(8)
+	providerPaymentID := "fake_" + randomHex(8)
+	metadata := fmt.Sprintf(`{"fake":true,"payment_method":%q,"usd_to_credit_ratio":%g}`, req.PaymentMethod, ratio)
+	if _, err := tx.ExecContext(r.Context(), `
+		insert into user_credit_purchases(id, user_id, credits, amount_cents, currency, status, metadata)
+		values($1, $2, $3, $4, 'USD', 'posted', $5)`, purchaseID, userID, req.Credits, amountCents, metadata); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `
+		insert into user_payments(id, wallet_id, provider, provider_payment_id, amount_cents, currency, status, metadata)
+		values($1, $2, $3, $4, $5, 'USD', 'succeeded', $6)`, paymentID, walletID, req.PaymentMethod, providerPaymentID, amountCents, metadata); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `
+		insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata)
+		values($1, $2, 'purchase', $3, 'paid', 'posted', 'fake credit purchase', $4, $5)`, ledgerID, walletID, req.Credits, purchaseID, metadata); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `
+		update user_wallets
+		set paid_credits = paid_credits + $1, updated_at = current_timestamp
+		where id = $2`, req.Credits, walletID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, response{"purchase_id": purchaseID, "wallet_id": walletID, "credits": req.Credits, "amount_cents": amountCents, "currency": "USD", "status": "posted"})
+}
+
+func (a *App) creditRatio(ctx context.Context) (float64, error) {
+	var raw string
+	if err := a.DB.QueryRowContext(ctx, `select conf_value from sys_config where conf_key = 'usd_to_credit_ratio'`).Scan(&raw); err != nil {
+		return 1, err
+	}
+	var ratio float64
+	if _, err := fmt.Sscanf(raw, "%f", &ratio); err != nil || ratio <= 0 {
+		return 1, nil
+	}
+	return ratio, nil
+}
+
+func (a *App) walletForUser(ctx context.Context, userID string) (string, error) {
+	var walletID string
+	err := a.DB.QueryRowContext(ctx, `
+		select w.id
+		from sys_users u
+		join user_wallets w on w.company_id = u.company_id and w.project_id is null
+		where u.id = $1 and u.company_id is not null
+		limit 1`, userID).Scan(&walletID)
+	if err == nil {
+		return walletID, nil
+	}
+	err = a.DB.QueryRowContext(ctx, `
+		select w.id
+		from sys_memberships m
+		join user_projects p on p.organization_id = m.organization_id
+		join user_wallets w on w.project_id = p.id
+		where m.user_id = $1
+		order by p.created_at asc
+		limit 1`, userID).Scan(&walletID)
+	return walletID, err
+}
+
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)

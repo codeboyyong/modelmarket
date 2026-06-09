@@ -435,6 +435,37 @@ button:hover,
   overflow-wrap: anywhere;
 }
 
+.credit-cost-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.credit-cost-row span,
+.credit-cost-row small {
+  color: var(--muted);
+}
+
+.credit-cost-row small {
+  grid-column: 1 / -1;
+  font-size: 13px;
+}
+
+.card-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.two-column-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

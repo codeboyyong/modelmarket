@@ -40,7 +40,28 @@
 -- DELETE FROM sys_sessions;
 -- DELETE FROM sys_oauth_accounts;
 -- DELETE FROM sys_users;
+-- DELETE FROM sys_config;
 -- DELETE FROM sys_roles;
+
+INSERT INTO sys_config (conf_key, conf_value, description) VALUES
+  ('usd_to_credit_ratio', '1', 'Number of paid credits granted per 1 USD for fake local purchases'),
+  ('default_currency', 'USD', 'Default billing currency for local/demo purchases'),
+  ('fake_payments_enabled', 'true', 'Allows local/demo purchases to succeed without a real payment provider'),
+  ('model_catalog_cache_ttl_seconds', '300', 'Cache lifetime for model catalog responses'),
+  ('pricing_cache_ttl_seconds', '300', 'Cache lifetime for pricing responses'),
+  ('user_session_ttl_hours', '24', 'Default login session lifetime'),
+  ('password_min_length', '8', 'Minimum password length for account password validation'),
+  ('max_upload_file_mb', '200', 'Maximum supported upload size for workbench assets'),
+  ('allowed_upload_mime_types', 'image/*,audio/*,video/*', 'Comma-separated MIME type allowlist for uploaded conversation assets'),
+  ('s3_bucket_name', 'model-market-dev-assets', 'Default S3 bucket name for uploaded and generated workbench assets'),
+  ('s3_asset_url_ttl_seconds', '3600', 'Signed asset download URL lifetime when private S3 URLs are enabled'),
+  ('default_project_credit_limit', '0', 'Default project credit cap; 0 means no cap'),
+  ('low_credit_warning_threshold', '100', 'Credit balance threshold used to warn users about low balance'),
+  ('oauth_google_enabled', 'true', 'Enables Google login in the UI'),
+  ('oauth_github_enabled', 'true', 'Enables GitHub login in the UI'),
+  ('oauth_facebook_enabled', 'true', 'Enables Facebook login in the UI'),
+  ('maintenance_mode', 'false', 'Disables write actions when enabled'),
+  ('support_email', 'support@example.com', 'Default support email shown by contact surfaces');
 
 INSERT INTO sys_roles (id, name, description) VALUES
   ('role-owner', 'owner', 'Organization owner'),

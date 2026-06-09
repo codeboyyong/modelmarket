@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS sys_roles (
   description TEXT
 );
 
+-- System table: platform-wide key/value configuration such as credit exchange rate.
+CREATE TABLE IF NOT EXISTS sys_config (
+  conf_key VARCHAR(255) PRIMARY KEY,
+  conf_value VARCHAR(4000) NOT NULL,
+  description TEXT,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- System table: links users to organizations with a role.
 CREATE TABLE IF NOT EXISTS sys_memberships (
   id VARCHAR(64) PRIMARY KEY,

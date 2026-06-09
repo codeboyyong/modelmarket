@@ -1369,6 +1369,73 @@ function profileRow(label: string, value: string) {
   return `<div class="profile-row"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`;
 }
 
+function openBuyCredit() {
+  closeAccountMenu();
+  if (!getStoredUser()) {
+    openLogin();
+    return;
+  }
+  ($("buyCreditAmount") as HTMLInputElement).value = "100";
+  updateBuyCreditEstimate();
+  updatePaymentFields();
+  $("buyCreditMessage").textContent = "";
+  $("buyCreditMessage").classList.remove("error");
+  $("buyCreditModal").classList.remove("hidden");
+}
+
+function closeBuyCredit() {
+  $("buyCreditModal").classList.add("hidden");
+}
+
+function selectedPaymentMethod() {
+  return Array.from(document.querySelectorAll<HTMLInputElement>("input[name='paymentMethod']")).find((input) => input.checked)?.value || "credit_card";
+}
+
+function updatePaymentFields() {
+  $("creditCardFields").classList.toggle("hidden", selectedPaymentMethod() !== "credit_card");
+}
+
+function updateBuyCreditEstimate() {
+  const credits = Math.max(0, Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
+  $("buyCreditUsd").textContent = `$${credits.toFixed(2)}`;
+}
+
+async function submitBuyCredit(event: SubmitEvent) {
+  event.preventDefault();
+  const user = getStoredUser();
+  if (!user) {
+    openLogin();
+    return;
+  }
+  const credits = Math.round(Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
+  if (credits <= 0) {
+    setBuyCreditMessage("Enter a credit amount greater than 0.", true);
+    return;
+  }
+  if (selectedPaymentMethod() === "credit_card" && !($("cardNumber") as HTMLInputElement).value.trim()) {
+    setBuyCreditMessage("Enter a credit card number.", true);
+    return;
+  }
+  setBuyCreditMessage("Processing fake payment...");
+  try {
+    const result = await request<{ credits: number; amount_cents: number; status: string }>("/api/v1/credits/purchase", {
+      method: "POST",
+      body: JSON.stringify({ user_id: user.id, credits, payment_method: selectedPaymentMethod() })
+    });
+    setBuyCreditMessage(`Added ${result.credits.toLocaleString()} credits.`);
+    await loadProjects();
+    await renderCreditAnalytics();
+    await renderUserCreditUsage();
+  } catch (error) {
+    setBuyCreditMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+function setBuyCreditMessage(message: string, isError = false) {
+  $("buyCreditMessage").textContent = message;
+  $("buyCreditMessage").classList.toggle("error", isError);
+}
+
 function setSignupMode(enabled: boolean) {
   signupMode = enabled;
   changePasswordMode = false;
@@ -1587,6 +1654,10 @@ function accountAction(action: string) {
     openProfile();
     return;
   }
+  if (action === "buy-credit") {
+    openBuyCredit();
+    return;
+  }
   if (action === "logout") {
     localStorage.removeItem("authUser");
     localStorage.removeItem("authSession");
@@ -1640,6 +1711,15 @@ $("settingsForm").addEventListener("submit", (event) => saveSettings(event as Su
 $("closeProfile").addEventListener("click", closeProfile);
 $("profileModal").addEventListener("click", (event) => {
   if (event.target === $("profileModal")) closeProfile();
+});
+$("closeBuyCredit").addEventListener("click", closeBuyCredit);
+$("buyCreditModal").addEventListener("click", (event) => {
+  if (event.target === $("buyCreditModal")) closeBuyCredit();
+});
+$("buyCreditForm").addEventListener("submit", (event) => submitBuyCredit(event as SubmitEvent));
+$("buyCreditAmount").addEventListener("input", updateBuyCreditEstimate);
+document.querySelectorAll<HTMLInputElement>("input[name='paymentMethod']").forEach((input) => {
+  input.addEventListener("change", updatePaymentFields);
 });
 $("toggleSignup").addEventListener("click", () => {
   if (changePasswordMode) {
