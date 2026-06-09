@@ -7,4 +7,9 @@ MM_APP_ENV_ARG="${1:-dev}"
 . scripts/load-db-env.sh "$MM_APP_ENV_ARG"
 
 echo "Populating test data for MM_APP_ENV=$MM_APP_ENV MM_DB_DRIVER=$MM_DB_DRIVER MM_DB_NAME=$MM_DB_NAME"
+case "$MM_APP_ENV" in
+  dev|test|local)
+    run_sql_file "db/delete_all_data.sql"
+    ;;
+esac
 run_sql_file "db/populate_test_data.sql"

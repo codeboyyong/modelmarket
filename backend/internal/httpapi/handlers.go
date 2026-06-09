@@ -126,6 +126,41 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, login)
 }
 
+func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credentials"})
+		return
+	}
+	email, _, err := a.lookupLoginIdentity(r.Context(), req.Username)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
+		return
+	}
+	result, err := a.DB.ExecContext(r.Context(), `
+		update sys_users
+		set password_hash = $1
+		where lower(email) = lower($2)`, hashPassword(req.Password), email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"status": "password_updated", "email": email})
+}
+
 func (a *App) devSocialLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider string `json:"provider"`
@@ -457,6 +492,133 @@ func (a *App) companyUsageModels(ctx context.Context, companyID string) ([]respo
 		items = append(items, response{"model_slug": slug, "model": name, "modality": modality, "credits_used": credits})
 	}
 	return items, rows.Err()
+}
+
+func (a *App) userCreditUsage(w http.ResponseWriter, r *http.Request) {
+	rangeDays := parseRangeDays(r.URL.Query().Get("range"))
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		userID = "user-yong-zhao"
+	}
+	if _, err := a.resolveUsageUserID(r.Context(), userID); err != nil {
+		userID = "user-yong-zhao"
+	}
+
+	usage, totalTokens, topModel, err := a.userTokenUsageRows(r.Context(), userID, rangeDays)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if len(usage) == 0 && userID != "user-yong-zhao" {
+		userID = "user-yong-zhao"
+		usage, totalTokens, topModel, err = a.userTokenUsageRows(r.Context(), userID, rangeDays)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+	}
+	purchases, creditsBought, err := a.userCreditPurchases(r.Context(), userID, rangeDays)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{
+		"user_id":        userID,
+		"range_days":     rangeDays,
+		"total_tokens":   totalTokens,
+		"credits_bought": creditsBought,
+		"top_model":      topModel,
+		"usage":          usage,
+		"purchases":      purchases,
+	})
+}
+
+func (a *App) resolveUsageUserID(ctx context.Context, value string) (string, error) {
+	var id string
+	err := a.DB.QueryRowContext(ctx, `
+		select id
+		from sys_users
+		where id = $1 or lower(email) = lower($1) or lower(name) = lower($1)
+		limit 1`, value).Scan(&id)
+	return id, err
+}
+
+func (a *App) userTokenUsageRows(ctx context.Context, userID string, rangeDays int) ([]response, int64, string, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select to_char(date(ue.created_at), 'YYYY-MM-DD'), ue.model_slug, coalesce(m.name, ue.model_slug),
+			coalesce(m.modality, ''), sum(ue.input_tokens), sum(ue.output_tokens), sum(ue.customer_charge)
+		from user_usage_events ue
+		left join sys_models m on m.slug = ue.model_slug
+		where ue.actor_user_id = $1
+			and ue.created_at >= current_timestamp - ($2::int * interval '1 day')
+		group by date(ue.created_at), ue.model_slug, m.name, m.modality
+		order by date(ue.created_at) asc, sum(ue.input_tokens + ue.output_tokens) desc`, userID, rangeDays)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	defer rows.Close()
+	items := []response{}
+	totalsByModel := map[string]int64{}
+	var totalTokens int64
+	for rows.Next() {
+		var date, slug, name, modality string
+		var inputTokens, outputTokens, customerCharge int64
+		if err := rows.Scan(&date, &slug, &name, &modality, &inputTokens, &outputTokens, &customerCharge); err != nil {
+			return nil, 0, "", err
+		}
+		rowTotal := inputTokens + outputTokens
+		totalTokens += rowTotal
+		totalsByModel[name] += rowTotal
+		items = append(items, response{"date": date, "model": name, "model_slug": slug, "modality": modality, "input_tokens": inputTokens, "output_tokens": outputTokens, "customer_charge": customerCharge})
+	}
+	topModel := ""
+	var topTokens int64
+	for model, tokens := range totalsByModel {
+		if tokens > topTokens {
+			topModel = model
+			topTokens = tokens
+		}
+	}
+	if topModel == "" {
+		topModel = "-"
+	}
+	return items, totalTokens, topModel, rows.Err()
+}
+
+func (a *App) userCreditPurchases(ctx context.Context, userID string, rangeDays int) ([]response, int64, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select to_char(date(created_at), 'YYYY-MM-DD'), credits, amount_cents, currency, status
+		from user_credit_purchases
+		where user_id = $1
+			and created_at >= current_timestamp - ($2::int * interval '1 day')
+		order by created_at desc`, userID, rangeDays)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := []response{}
+	var totalCredits int64
+	for rows.Next() {
+		var date, currency, status string
+		var credits, amountCents int64
+		if err := rows.Scan(&date, &credits, &amountCents, &currency, &status); err != nil {
+			return nil, 0, err
+		}
+		totalCredits += credits
+		items = append(items, response{"date": date, "credits": credits, "amount_cents": amountCents, "currency": currency, "status": status})
+	}
+	return items, totalCredits, rows.Err()
+}
+
+func parseRangeDays(value string) int {
+	switch strings.TrimSpace(value) {
+	case "7":
+		return 7
+	case "90":
+		return 90
+	default:
+		return 30
+	}
 }
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {

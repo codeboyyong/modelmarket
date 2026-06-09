@@ -267,6 +267,19 @@ CREATE TABLE IF NOT EXISTS user_payments (
   CONSTRAINT fk_payments_wallet FOREIGN KEY (wallet_id) REFERENCES user_wallets(id)
 );
 
+-- User table: user-facing credit purchase history for account billing views.
+CREATE TABLE IF NOT EXISTS user_credit_purchases (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  credits BIGINT NOT NULL,
+  amount_cents BIGINT NOT NULL,
+  currency VARCHAR(32) NOT NULL DEFAULT 'USD',
+  status VARCHAR(64) NOT NULL DEFAULT 'posted',
+  metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_credit_purchases_user FOREIGN KEY (user_id) REFERENCES sys_users(id)
+);
+
 -- User table: organization billing invoices and invoice metadata.
 CREATE TABLE IF NOT EXISTS user_invoices (
   id VARCHAR(64) PRIMARY KEY,
@@ -431,6 +444,8 @@ CREATE TABLE IF NOT EXISTS user_usage_events (
   model_slug VARCHAR(255) NOT NULL,
   provider_slug VARCHAR(255) NOT NULL,
   event_type VARCHAR(64) NOT NULL,
+  input_tokens BIGINT NOT NULL DEFAULT 0,
+  output_tokens BIGINT NOT NULL DEFAULT 0,
   customer_charge BIGINT NOT NULL DEFAULT 0,
   provider_cost BIGINT NOT NULL DEFAULT 0,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
@@ -540,6 +555,8 @@ ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
 ALTER TABLE user_wallets ALTER COLUMN project_id DROP NOT NULL;
 ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
+ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN
@@ -578,6 +595,7 @@ CREATE INDEX IF NOT EXISTS idx_sys_users_company ON sys_users(company_id);
 CREATE INDEX IF NOT EXISTS idx_user_companies_owner ON user_companies(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_projects_company ON user_projects(company_id);
 CREATE INDEX IF NOT EXISTS idx_user_wallets_company ON user_wallets(company_id);
+CREATE INDEX IF NOT EXISTS idx_user_credit_purchases_user_created ON user_credit_purchases(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sys_models_provider ON sys_models(provider_id);
 CREATE INDEX IF NOT EXISTS idx_sys_model_profiles_model ON sys_model_profiles(model_id);
 CREATE INDEX IF NOT EXISTS idx_user_messages_conversation ON user_messages(conversation_id, created_at);

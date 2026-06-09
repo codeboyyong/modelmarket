@@ -104,6 +104,36 @@ type UsageSlice = {
   color: string;
 };
 
+type UserTokenUsageRow = {
+  date: string;
+  model: string;
+  model_slug: string;
+  modality?: string;
+  input_tokens: number;
+  output_tokens: number;
+  customer_charge?: number;
+  color: string;
+};
+
+type CreditPurchase = {
+  date: string;
+  credits: number;
+  amount?: string;
+  amount_cents?: number;
+  currency?: string;
+  status: string;
+};
+
+type UserCreditUsageResponse = {
+  user_id: string;
+  range_days: number;
+  total_tokens: number;
+  credits_bought: number;
+  top_model: string;
+  usage: Array<Omit<UserTokenUsageRow, "color">>;
+  purchases: CreditPurchase[];
+};
+
 type ChatResponse = {
   id?: string;
   model?: string;
@@ -164,6 +194,7 @@ let branches: ConversationBranch[] = [];
 let assets: WorkspaceAsset[] = [];
 let pricingRows: PricingRow[] = [];
 let signupMode = false;
+let changePasswordMode = false;
 let selectedModality = "all";
 let selectedPricingModality = "all";
 let workbenchModality = "image";
@@ -174,7 +205,7 @@ let conversationPickerOpen = false;
 let currentConversationID = "";
 let currentBranchID = "";
 let branchSourceMessageID = "";
-const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "company", "privacy", "terms"]);
+const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -810,31 +841,43 @@ function renderPricing() {
       .join("") || "<tr><td colspan=\"4\">No pricing rows match the current filters.</td></tr>";
 }
 
-function renderCreditAnalytics() {
+async function renderCreditAnalytics() {
   const range = (($("creditRange") as HTMLSelectElement).value || "30") as CreditRange;
-  const selectedProject = projects.find((project) => project.id === currentProjectID);
-  const balance = selectedProject ? selectedProject.paid_credits + selectedProject.promotional_credits : 12840;
-  $("currentCreditBalance").textContent = `${Math.round(balance).toLocaleString()} credits`;
-  renderCreditLineChart(buildCreditHistory(range, balance));
-  renderCreditUsageChart(buildCreditUsage(range));
+  const user = getStoredUser();
+  try {
+    const path = `/api/v1/user-credit-usage?range=${encodeURIComponent(range)}${user?.id ? `&user_id=${encodeURIComponent(user.id)}` : ""}`;
+    const data = await request<UserCreditUsageResponse>(path);
+    const usageRows = data.usage.map((row) => ({ ...row, color: colorForModel(row.model_slug) }));
+    renderCreditAnalyticsData(range, usageRows, data.purchases);
+  } catch {
+    const usageRows = buildUserTokenUsage(range);
+    const purchases = buildUserCreditPurchases(range);
+    renderCreditAnalyticsData(range, usageRows, purchases);
+  }
 }
 
-function buildCreditHistory(range: CreditRange, balance: number) {
-  const days = Number(range);
-  return Array.from({ length: days }, (_, index) => {
-    const remaining = days - index - 1;
-    const spend = remaining * (days === 7 ? 38 : days === 30 ? 24 : 11);
-    const variance = Math.sin(index * 0.9) * (days === 7 ? 18 : 42);
-    return Math.max(0, Math.round(balance + spend + variance));
+function renderCreditAnalyticsData(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
+  const balancePoints = buildBalanceHistoryPoints(range, usageRows, purchases);
+  const currentBalance = balancePoints[balancePoints.length - 1] || 0;
+  $("currentCreditBalance").textContent = `${Math.round(currentBalance).toLocaleString()} credits`;
+  renderCreditLineChart(balancePoints);
+  renderCreditUsageChart(buildCreditUsageByType(usageRows));
+}
+
+function buildCreditUsageByType(rows: UserTokenUsageRow[]): UsageSlice[] {
+  const totals = new Map<"image" | "audio" | "video", number>([
+    ["image", 0],
+    ["audio", 0],
+    ["video", 0]
+  ]);
+  rows.forEach((row) => {
+    const type = usageTypeForRow(row);
+    totals.set(type, (totals.get(type) || 0) + chargeForUsageRow(row));
   });
-}
-
-function buildCreditUsage(range: CreditRange): UsageSlice[] {
-  const multiplier = range === "7" ? 0.35 : range === "90" ? 2.8 : 1;
   return [
-    { type: "image", label: "Image", credits: Math.round(940 * multiplier), color: "#3f8cff" },
-    { type: "audio", label: "Audio", credits: Math.round(520 * multiplier), color: "#12b981" },
-    { type: "video", label: "Video", credits: Math.round(1380 * multiplier), color: "#f59e0b" }
+    { type: "image", label: "Image", credits: totals.get("image") || 0, color: "#3f8cff" },
+    { type: "audio", label: "Audio", credits: totals.get("audio") || 0, color: "#12b981" },
+    { type: "video", label: "Video", credits: totals.get("video") || 0, color: "#f59e0b" }
   ];
 }
 
@@ -882,6 +925,229 @@ function renderCreditUsageChart(slices: UsageSlice[]) {
       return `<div><i style="background:${slice.color}"></i><span>${escapeHTML(slice.label)}</span><strong>${percent}%</strong></div>`;
     })
     .join("");
+}
+
+async function renderUserCreditUsage() {
+  const range = (($("userUsageRange") as HTMLSelectElement).value || "30") as CreditRange;
+  const user = getStoredUser();
+  try {
+    const path = `/api/v1/user-credit-usage?range=${encodeURIComponent(range)}${user?.id ? `&user_id=${encodeURIComponent(user.id)}` : ""}`;
+    const data = await request<UserCreditUsageResponse>(path);
+    const usageRows = data.usage.map((row) => ({ ...row, color: colorForModel(row.model_slug) }));
+    renderUserCreditUsageData(range, usageRows, data.purchases, data.total_tokens, data.credits_bought, data.top_model || topUserUsageModel(usageRows));
+  } catch {
+    const usageRows = buildUserTokenUsage(range);
+    const purchases = buildUserCreditPurchases(range);
+    const totalTokens = usageRows.reduce((sum, row) => sum + row.input_tokens + row.output_tokens, 0);
+    const totalCreditsBought = purchases.reduce((sum, purchase) => sum + purchase.credits, 0);
+    renderUserCreditUsageData(range, usageRows, purchases, totalTokens, totalCreditsBought, topUserUsageModel(usageRows));
+  }
+}
+
+function renderUserCreditUsageData(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[], totalTokens: number, totalCreditsBought: number, topModel: string) {
+  $("userTokenTotal").textContent = totalTokens.toLocaleString();
+  $("userCreditBought").textContent = totalCreditsBought.toLocaleString();
+  $("userTopModel").textContent = topModel;
+  renderUserTokenLineChart(usageRows);
+  renderUserBalanceLineChart(range, usageRows, purchases);
+  renderUserModelPieChart(usageRows);
+  renderUserDailyUsageTable(usageRows);
+  renderUserPurchaseTable(purchases);
+}
+
+function buildUserTokenUsage(range: CreditRange): UserTokenUsageRow[] {
+  const days = Number(range);
+  const modelSeed = [
+    { model: "xAI: Grok Imagine Video", model_slug: "x-ai/grok-imagine-video", inputBase: 820, outputBase: 1640, color: "#f59e0b" },
+    { model: "Microsoft: MAI-Image-2.5", model_slug: "microsoft/mai-image-2.5", inputBase: 520, outputBase: 980, color: "#3f8cff" },
+    { model: "OpenAI: GPT Audio", model_slug: "openai/gpt-audio", inputBase: 430, outputBase: 760, color: "#12b981" }
+  ];
+  return Array.from({ length: days }, (_, dayIndex) => {
+    const date = dateDaysAgo(days - dayIndex - 1);
+    return modelSeed.map((model, modelIndex) => {
+      const wave = 1 + Math.sin((dayIndex + 1) * (modelIndex + 2) * 0.42) * 0.18;
+      const weekdayBoost = dayIndex % 7 === 2 || dayIndex % 7 === 3 ? 1.22 : 1;
+      const rangeBoost = days === 7 ? 1.12 : days === 90 ? 0.86 : 1;
+      return {
+        date,
+        model: model.model,
+        model_slug: model.model_slug,
+        input_tokens: Math.round(model.inputBase * wave * weekdayBoost * rangeBoost),
+        output_tokens: Math.round(model.outputBase * wave * weekdayBoost * rangeBoost),
+        color: model.color
+      };
+    });
+  }).flat();
+}
+
+function buildUserCreditPurchases(range: CreditRange): CreditPurchase[] {
+  const purchases = [
+    { date: dateDaysAgo(3), credits: 5000, amount: "$50.00", status: "Posted" },
+    { date: dateDaysAgo(18), credits: 10000, amount: "$100.00", status: "Posted" },
+    { date: dateDaysAgo(44), credits: 5000, amount: "$50.00", status: "Posted" },
+    { date: dateDaysAgo(72), credits: 20000, amount: "$200.00", status: "Posted" }
+  ];
+  return purchases.filter((purchase) => daysBetween(purchase.date) < Number(range));
+}
+
+function renderUserDailyUsageTable(rows: UserTokenUsageRow[]) {
+  $("userDailyUsageRows").innerHTML = rows
+    .slice()
+    .reverse()
+    .map((row) => {
+      const total = row.input_tokens + row.output_tokens;
+      return `<tr>
+        <td>${escapeHTML(row.date)}</td>
+        <td><strong>${escapeHTML(row.model)}</strong><small>${escapeHTML(row.model_slug)}</small></td>
+        <td>${row.input_tokens.toLocaleString()}</td>
+        <td>${row.output_tokens.toLocaleString()}</td>
+        <td>${total.toLocaleString()}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderUserPurchaseTable(purchases: CreditPurchase[]) {
+  $("userCreditPurchaseRows").innerHTML =
+    purchases
+      .map((purchase) => `<tr>
+        <td>${escapeHTML(purchase.date)}</td>
+        <td>${purchase.credits.toLocaleString()}</td>
+        <td>${escapeHTML(formatPurchaseAmount(purchase))}</td>
+        <td>${escapeHTML(purchase.status)}</td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No credit purchases in this range.</td></tr>";
+}
+
+function renderUserTokenLineChart(rows: UserTokenUsageRow[]) {
+  const dailyTotals = new Map<string, number>();
+  rows.forEach((row) => {
+    dailyTotals.set(row.date, (dailyTotals.get(row.date) || 0) + row.input_tokens + row.output_tokens);
+  });
+  renderLineChart("userTokenLineChart", Array.from(dailyTotals.values()), "tokens");
+}
+
+function renderUserBalanceLineChart(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
+  renderLineChart("userBalanceLineChart", buildBalanceHistoryPoints(range, usageRows, purchases), "credits");
+}
+
+function buildBalanceHistoryPoints(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
+  const days = Number(range);
+  let balance = 12000;
+  const usageByDate = new Map<string, number>();
+  usageRows.forEach((row) => {
+    usageByDate.set(row.date, (usageByDate.get(row.date) || 0) + chargeForUsageRow(row));
+  });
+  const purchasesByDate = new Map<string, number>();
+  purchases.forEach((purchase) => {
+    purchasesByDate.set(purchase.date, (purchasesByDate.get(purchase.date) || 0) + purchase.credits);
+  });
+  const points = Array.from({ length: days }, (_, index) => {
+    const date = dateDaysAgo(days - index - 1);
+    balance += purchasesByDate.get(date) || 0;
+    balance -= usageByDate.get(date) || 0;
+    return Math.max(0, balance);
+  });
+  return points;
+}
+
+function renderUserModelPieChart(rows: UserTokenUsageRow[]) {
+  const byModel = new Map<string, { total: number; color: string }>();
+  rows.forEach((row) => {
+    const current = byModel.get(row.model) || { total: 0, color: row.color };
+    current.total += row.input_tokens + row.output_tokens;
+    byModel.set(row.model, current);
+  });
+  const slices = Array.from(byModel.entries()).map(([label, value]) => ({ label, credits: value.total, color: value.color }));
+  const total = slices.reduce((sum, slice) => sum + slice.credits, 0) || 1;
+  let cursor = 0;
+  const gradient = slices
+    .map((slice) => {
+      const start = cursor;
+      cursor += (slice.credits / total) * 100;
+      return `${slice.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+    })
+    .join(", ");
+  $("userModelPieChart").style.background = `conic-gradient(${gradient})`;
+  $("userModelPieChart").innerHTML = `<span>${total.toLocaleString()}<small>tokens</small></span>`;
+  $("userModelUsageLegend").innerHTML = slices
+    .map((slice) => {
+      const percent = Math.round((slice.credits / total) * 100);
+      return `<div><i style="background:${slice.color}"></i><span>${escapeHTML(slice.label)}</span><strong>${percent}%</strong></div>`;
+    })
+    .join("");
+}
+
+function renderLineChart(elementID: string, points: number[], unit: string) {
+  const width = 320;
+  const height = 132;
+  const pad = 10;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = Math.max(1, max - min);
+  const coords = points.map((value, index) => {
+    const x = pad + (index / Math.max(1, points.length - 1)) * (width - pad * 2);
+    const y = pad + (1 - (value - min) / span) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const last = points[points.length - 1] || 0;
+  const first = points[0] || last;
+  const change = last - first;
+  $(elementID).innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" aria-hidden="true">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" />
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" />
+      <polyline points="${coords.join(" ")}" />
+      <circle cx="${coords[coords.length - 1]?.split(",")[0] || pad}" cy="${coords[coords.length - 1]?.split(",")[1] || pad}" r="4" />
+    </svg>
+    <div class="chart-note"><span>${first.toLocaleString()} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString()} ${escapeHTML(unit)}</strong></div>
+  `;
+}
+
+function topUserUsageModel(rows: UserTokenUsageRow[]) {
+  const totals = new Map<string, number>();
+  rows.forEach((row) => totals.set(row.model, (totals.get(row.model) || 0) + row.input_tokens + row.output_tokens));
+  const [top] = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
+  return top ? top[0] : "-";
+}
+
+function chargeForUsageRow(row: UserTokenUsageRow) {
+  if (typeof row.customer_charge === "number") return row.customer_charge;
+  return Math.max(1, Math.round((row.input_tokens + row.output_tokens) / 100));
+}
+
+function usageTypeForRow(row: UserTokenUsageRow): "image" | "audio" | "video" {
+  const value = `${row.modality || ""} ${row.model_slug}`.toLowerCase();
+  if (value.includes("audio")) return "audio";
+  if (value.includes("video")) return "video";
+  return "image";
+}
+
+function colorForModel(modelSlug: string) {
+  if (modelSlug.includes("video")) return "#f59e0b";
+  if (modelSlug.includes("audio")) return "#12b981";
+  if (modelSlug.includes("image")) return "#3f8cff";
+  return "#8b5cf6";
+}
+
+function formatPurchaseAmount(purchase: CreditPurchase) {
+  if (purchase.amount) return purchase.amount;
+  const amount = (purchase.amount_cents || 0) / 100;
+  return `${purchase.currency || "USD"} ${amount.toFixed(2)}`;
+}
+
+function dateDaysAgo(daysAgo: number) {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().slice(0, 10);
+}
+
+function daysBetween(dateValue: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const then = new Date(`${dateValue}T00:00:00`);
+  return Math.round((today.getTime() - then.getTime()) / 86400000);
 }
 
 async function loadCorporateUsage(user: AuthUser) {
@@ -1020,12 +1286,16 @@ function setActiveTab(tab: string) {
     const user = getStoredUser();
     if (user) void loadCorporateUsage(user);
   }
+  if (nextTab === "credit-usage") {
+    renderUserCreditUsage();
+  }
 }
 
 function openLogin() {
+  setSignupMode(false);
   $("loginModal").classList.remove("hidden");
   closeAccountMenu();
-  $("authMessage").textContent = "";
+  setAuthMessage("");
   $("authUsername").focus();
 }
 
@@ -1033,42 +1303,158 @@ function closeLogin() {
   $("loginModal").classList.add("hidden");
 }
 
+function openSettings() {
+  closeAccountMenu();
+  ($("settingsLanguage") as HTMLSelectElement).value = localStorage.getItem("language") || "en";
+  ($("settingsTheme") as HTMLSelectElement).value = localStorage.getItem("themeMode") || "system";
+  ($("settingsUsageRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("creditRange") as HTMLSelectElement).value || "30");
+  ($("settingsWorkbenchType") as HTMLSelectElement).value = localStorage.getItem("defaultWorkbenchType") || workbenchModality || "image";
+  ($("settingsEmailNotifications") as HTMLInputElement).checked = localStorage.getItem("emailNotifications") === "true";
+  ($("settingsCompactTables") as HTMLInputElement).checked = localStorage.getItem("compactTables") === "true";
+  $("settingsMessage").textContent = "";
+  $("settingsModal").classList.remove("hidden");
+}
+
+function closeSettings() {
+  $("settingsModal").classList.add("hidden");
+}
+
+function saveSettings(event: SubmitEvent) {
+  event.preventDefault();
+  const language = ($("settingsLanguage") as HTMLSelectElement).value;
+  const theme = ($("settingsTheme") as HTMLSelectElement).value;
+  const usageRange = (($("settingsUsageRange") as HTMLSelectElement).value || "30") as CreditRange;
+  const defaultWorkbenchType = ($("settingsWorkbenchType") as HTMLSelectElement).value;
+  applyLanguage(language);
+  applyTheme(theme);
+  localStorage.setItem("defaultUsageRange", usageRange);
+  localStorage.setItem("defaultWorkbenchType", defaultWorkbenchType);
+  localStorage.setItem("emailNotifications", String(($("settingsEmailNotifications") as HTMLInputElement).checked));
+  applyCompactTables(($("settingsCompactTables") as HTMLInputElement).checked);
+  ($("creditRange") as HTMLSelectElement).value = usageRange;
+  ($("userUsageRange") as HTMLSelectElement).value = usageRange;
+  workbenchModality = defaultWorkbenchType;
+  document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.workbenchModality === workbenchModality);
+  });
+  renderCreditAnalytics();
+  renderUserCreditUsage();
+  renderModelControls();
+  $("settingsMessage").textContent = "Settings saved.";
+}
+
+function openProfile() {
+  closeAccountMenu();
+  const user = getStoredUser();
+  if (!user) {
+    openLogin();
+    return;
+  }
+  $("profileSummary").innerHTML = [
+    profileRow("User name", user.name || "-"),
+    profileRow("Email", user.email || "-"),
+    profileRow("Account type", formatUserType(user.user_type || "individual_consumer")),
+    profileRow("Company", user.company_name || "Individual account"),
+    profileRow("User ID", user.id || "-"),
+    profileRow("Current project", currentProjectID || "-")
+  ].join("");
+  $("profileModal").classList.remove("hidden");
+}
+
+function closeProfile() {
+  $("profileModal").classList.add("hidden");
+}
+
+function profileRow(label: string, value: string) {
+  return `<div class="profile-row"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`;
+}
+
 function setSignupMode(enabled: boolean) {
   signupMode = enabled;
-  $("nameField").classList.toggle("hidden", !enabled);
-  $("accountTypeField").classList.toggle("hidden", !enabled);
-  updateSignupCompanyField();
-  $("loginModeLabel").textContent = enabled ? "Create account" : "Account";
-  $("loginTitle").textContent = enabled ? "Sign up for Model Market" : "Log in to Model Market";
-  $("authSubmit").textContent = enabled ? "Create account" : "Login";
-  $("authSwitchText").textContent = enabled ? "Already have an account?" : "No account yet?";
-  $("toggleSignup").textContent = enabled ? "Login" : "Sign up";
-  $("authMessage").textContent = "";
+  changePasswordMode = false;
+  renderAuthMode();
+}
+
+function setChangePasswordMode(enabled: boolean) {
+  changePasswordMode = enabled;
+  signupMode = false;
+  renderAuthMode();
+}
+
+function renderAuthMode() {
+  $("nameField").classList.toggle("hidden", !signupMode);
+  $("accountTypeField").classList.toggle("hidden", !signupMode);
+  $("companyNameField").classList.toggle("hidden", !signupMode || selectedSignupAccountType() !== "corporate");
+  $("confirmPasswordField").classList.toggle("hidden", !signupMode && !changePasswordMode);
+  document.querySelector<HTMLElement>(".social-login")?.classList.toggle("hidden", changePasswordMode);
+  ($("authUsername") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "off" : "username";
+  ($("authPassword") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "new-password" : "current-password";
+  ($("authConfirmPassword") as HTMLInputElement).autocomplete = "new-password";
+  if (signupMode || changePasswordMode) {
+    ($("authUsername") as HTMLInputElement).value = "";
+    ($("authPassword") as HTMLInputElement).value = "";
+    ($("authConfirmPassword") as HTMLInputElement).value = "";
+  }
+  if (changePasswordMode) {
+    $("loginModeLabel").textContent = "Password";
+    $("loginTitle").textContent = "Change password";
+    $("authSubmit").textContent = "Update password";
+    $("authSwitchText").textContent = "Back to login?";
+    $("toggleSignup").textContent = "Login";
+    $("changePasswordText").textContent = "Need a new account?";
+    $("toggleChangePassword").textContent = "Sign up";
+  } else {
+    $("loginModeLabel").textContent = signupMode ? "Create account" : "Account";
+    $("loginTitle").textContent = signupMode ? "Sign up for Model Market" : "Log in to Model Market";
+    $("authSubmit").textContent = signupMode ? "Create account" : "Login";
+    $("authSwitchText").textContent = signupMode ? "Already have an account?" : "No account yet?";
+    $("toggleSignup").textContent = signupMode ? "Login" : "Sign up";
+    $("changePasswordText").textContent = "Forgot or need to reset password?";
+    $("toggleChangePassword").textContent = "Change password";
+  }
+  setAuthMessage("");
 }
 
 async function submitAuth(event: SubmitEvent) {
   event.preventDefault();
   const username = ($("authUsername") as HTMLInputElement).value.trim();
   const password = ($("authPassword") as HTMLInputElement).value;
+  const confirmPassword = ($("authConfirmPassword") as HTMLInputElement).value;
   const name = ($("authName") as HTMLInputElement).value.trim();
   const accountType = selectedSignupAccountType();
   const companyName = ($("authCompanyName") as HTMLInputElement).value.trim();
-  const path = signupMode ? "/api/v1/auth/signup" : "/api/v1/auth/login";
-  const body = signupMode ? { email: username, name, password, account_type: accountType, company_name: companyName } : { username, password };
-  $("authMessage").textContent = signupMode ? "Creating account..." : "Logging in...";
+  if ((signupMode || changePasswordMode) && password !== confirmPassword) {
+    setAuthMessage("Passwords do not match.", true);
+    return;
+  }
+  if (signupMode || changePasswordMode) {
+    const passwordError = validateSignupPassword(password);
+    if (passwordError) {
+      setAuthMessage(passwordError, true);
+      return;
+    }
+  }
+  const path = changePasswordMode ? "/api/v1/auth/change-password" : signupMode ? "/api/v1/auth/signup" : "/api/v1/auth/login";
+  const body = changePasswordMode ? { username, password } : signupMode ? { email: username, name, password, account_type: accountType, company_name: companyName } : { username, password };
+  setAuthMessage(changePasswordMode ? "Updating password..." : signupMode ? "Creating account..." : "Logging in...");
   try {
     const auth = await request<AuthResponse>(path, {
       method: "POST",
       body: JSON.stringify(body)
     });
+    if (changePasswordMode) {
+      setAuthMessage("Password updated. You can log in with the new password.");
+      window.setTimeout(() => setChangePasswordMode(false), 600);
+      return;
+    }
     completeAuth(auth, signupMode ? "Account created" : "Logged in");
   } catch (error) {
-    $("authMessage").textContent = error instanceof Error ? error.message : String(error);
+    setAuthMessage(formatAuthError(error), true);
   }
 }
 
 async function socialLogin(provider: string) {
-  $("authMessage").textContent = `Logging in with ${provider}...`;
+  setAuthMessage(`Logging in with ${provider}...`);
   try {
     const auth = await request<AuthResponse>("/api/v1/auth/social/dev", {
       method: "POST",
@@ -1076,20 +1462,44 @@ async function socialLogin(provider: string) {
     });
     completeAuth(auth, `Logged in with ${provider}`);
   } catch (error) {
-    $("authMessage").textContent = error instanceof Error ? error.message : String(error);
+    setAuthMessage(formatAuthError(error), true);
   }
+}
+
+function setAuthMessage(message: string, isError = false) {
+  $("authMessage").textContent = message;
+  $("authMessage").classList.toggle("error", isError);
+}
+
+function validateSignupPassword(password: string) {
+  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (!/[A-Za-z]/.test(password)) return "Password must include at least one letter.";
+  if (!/[0-9]/.test(password)) return "Password must include at least one number.";
+  if (!/[^A-Za-z0-9]/.test(password)) return "Password must include at least one special character.";
+  return "";
+}
+
+function formatAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("invalid_credentials")) return "Password is not correct.";
+  if (message.includes("missing_credentials")) return "Enter your username and password.";
+  if (message.includes("missing_signup_fields")) return "Enter your email and password.";
+  if (message.includes("user_not_found")) return "User was not found.";
+  if (message.includes("company_not_found")) return "Company name was not found.";
+  if (message.includes("missing_company_name")) return "Enter your company name.";
+  return message;
 }
 
 function completeAuth(auth: AuthResponse, message: string) {
   if (!auth.user) {
-    $("authMessage").textContent = "Login response did not include a user.";
+    setAuthMessage("Login response did not include a user.", true);
     return;
   }
   if (auth.project_id) currentProjectID = auth.project_id;
   localStorage.setItem("authUser", JSON.stringify(auth.user));
   localStorage.setItem("authSession", JSON.stringify(auth.session || {}));
   renderAuthUser();
-  $("authMessage").textContent = `${message} as ${auth.user.name}`;
+  setAuthMessage(`${message} as ${auth.user.name}`);
   if (isAdminUser(auth.user)) {
     $("adminUserName").textContent = auth.user.name || auth.user.email;
     setActiveTab("admin");
@@ -1169,6 +1579,14 @@ function closeAccountMenu() {
 
 function accountAction(action: string) {
   closeAccountMenu();
+  if (action === "settings") {
+    openSettings();
+    return;
+  }
+  if (action === "profile") {
+    openProfile();
+    return;
+  }
   if (action === "logout") {
     localStorage.removeItem("authUser");
     localStorage.removeItem("authSession");
@@ -1176,7 +1594,7 @@ function accountAction(action: string) {
     setActiveTab("home");
     return;
   }
-  window.history.replaceState(null, "", `#${action}`);
+  setActiveTab(action);
 }
 
 function applyTheme(mode: string) {
@@ -1196,6 +1614,11 @@ function applyLanguage(language: string) {
   localStorage.setItem("language", selected);
 }
 
+function applyCompactTables(enabled: boolean) {
+  document.documentElement.dataset.compactTables = String(enabled);
+  localStorage.setItem("compactTables", String(enabled));
+}
+
 $("loginButton").addEventListener("click", toggleAccountMenu);
 $("accountMenu").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-account-action]");
@@ -1209,7 +1632,29 @@ $("closeLogin").addEventListener("click", closeLogin);
 $("loginModal").addEventListener("click", (event) => {
   if (event.target === $("loginModal")) closeLogin();
 });
-$("toggleSignup").addEventListener("click", () => setSignupMode(!signupMode));
+$("closeSettings").addEventListener("click", closeSettings);
+$("settingsModal").addEventListener("click", (event) => {
+  if (event.target === $("settingsModal")) closeSettings();
+});
+$("settingsForm").addEventListener("submit", (event) => saveSettings(event as SubmitEvent));
+$("closeProfile").addEventListener("click", closeProfile);
+$("profileModal").addEventListener("click", (event) => {
+  if (event.target === $("profileModal")) closeProfile();
+});
+$("toggleSignup").addEventListener("click", () => {
+  if (changePasswordMode) {
+    setChangePasswordMode(false);
+    return;
+  }
+  setSignupMode(!signupMode);
+});
+$("toggleChangePassword").addEventListener("click", () => {
+  if (changePasswordMode) {
+    setSignupMode(true);
+    return;
+  }
+  setChangePasswordMode(true);
+});
 $("loginForm").addEventListener("submit", (event) => submitAuth(event as SubmitEvent));
 document.querySelectorAll<HTMLInputElement>("input[name='accountType']").forEach((input) => {
   input.addEventListener("change", updateSignupCompanyField);
@@ -1280,6 +1725,7 @@ $("modelDetailContent").addEventListener("click", async (event) => {
 $("modelSearch").addEventListener("input", renderModels);
 $("pricingSearch").addEventListener("input", renderPricing);
 $("creditRange").addEventListener("change", renderCreditAnalytics);
+$("userUsageRange").addEventListener("change", renderUserCreditUsage);
 $("pricingRows").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pricing-model-slug]");
   if (button) showModelDetail(button.dataset.pricingModelSlug || "");
@@ -1356,6 +1802,10 @@ window.addEventListener("hashchange", () => setActiveTab(window.location.hash.sl
 
 applyTheme(localStorage.getItem("themeMode") || "system");
 applyLanguage(localStorage.getItem("language") || "en");
+applyCompactTables(localStorage.getItem("compactTables") === "true");
+workbenchModality = localStorage.getItem("defaultWorkbenchType") || workbenchModality;
+($("creditRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("creditRange") as HTMLSelectElement).value || "30");
+($("userUsageRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("userUsageRange") as HTMLSelectElement).value || "30");
 renderAuthUser();
 renderCreditAnalytics();
 setActiveTab(window.location.hash.slice(1) || "home");

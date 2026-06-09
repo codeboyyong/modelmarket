@@ -26,7 +26,6 @@
             <div class="account-dropdown hidden" id="accountMenu" role="menu" aria-label="Account menu">
               <button type="button" role="menuitem" data-account-action="settings">Settings</button>
               <button type="button" role="menuitem" data-account-action="profile">User Profile</button>
-              <button type="button" role="menuitem" data-account-action="billing">Billing</button>
               <button type="button" role="menuitem" data-account-action="buy-credit">Buy Credit</button>
               <button type="button" role="menuitem" data-account-action="credit-usage">Credit Usage</button>
               <button type="button" role="menuitem" data-account-action="logout">Logout</button>
@@ -82,11 +81,15 @@
             </label>
             <label>
               Email or username
-              <input id="authUsername" type="text" autocomplete="email" placeholder="admin@example.com" />
+              <input id="authUsername" type="text" autocomplete="username" placeholder="admin@example.com" />
             </label>
             <label>
               Password
               <input id="authPassword" type="password" autocomplete="current-password" placeholder="Any dev password" />
+            </label>
+            <label id="confirmPasswordField" class="hidden">
+              Confirm password
+              <input id="authConfirmPassword" type="password" autocomplete="new-password" placeholder="Re-enter password" />
             </label>
             <button id="authSubmit" type="submit">Login</button>
           </form>
@@ -101,7 +104,85 @@
             <span id="authSwitchText">No account yet?</span>
             <button id="toggleSignup" type="button">Sign up</button>
           </p>
+          <p class="auth-switch">
+            <span id="changePasswordText">Forgot or need to reset password?</span>
+            <button id="toggleChangePassword" type="button">Change password</button>
+          </p>
           <p class="auth-message" id="authMessage" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <div class="modal-backdrop hidden" id="settingsModal" role="presentation">
+        <section class="login-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">Preferences</p>
+              <h2 id="settingsTitle">Settings</h2>
+            </div>
+            <button class="icon-button" id="closeSettings" type="button" aria-label="Close settings dialog">×</button>
+          </div>
+          <form class="auth-form" id="settingsForm">
+            <label>
+              Language
+              <select id="settingsLanguage">
+                <option value="en">EN</option>
+                <option value="zh">中文</option>
+              </select>
+            </label>
+            <label>
+              Theme
+              <select id="settingsTheme">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label>
+              Default usage range
+              <select id="settingsUsageRange">
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+            </label>
+            <label>
+              Default workbench type
+              <select id="settingsWorkbenchType">
+                <option value="image">Image</option>
+                <option value="audio">Audio</option>
+                <option value="video">Video</option>
+              </select>
+            </label>
+            <label class="toggle-row">
+              <span>
+                Email notifications
+                <small>Receive account and credit activity updates</small>
+              </span>
+              <input id="settingsEmailNotifications" type="checkbox" />
+            </label>
+            <label class="toggle-row">
+              <span>
+                Compact tables
+                <small>Use tighter row spacing in data-heavy views</small>
+              </span>
+              <input id="settingsCompactTables" type="checkbox" />
+            </label>
+            <button id="saveSettings" type="submit">Save settings</button>
+          </form>
+          <p class="auth-message" id="settingsMessage" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <div class="modal-backdrop hidden" id="profileModal" role="presentation">
+        <section class="login-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">Account</p>
+              <h2 id="profileTitle">User Profile</h2>
+            </div>
+            <button class="icon-button" id="closeProfile" type="button" aria-label="Close profile dialog">×</button>
+          </div>
+          <div class="profile-summary" id="profileSummary"></div>
         </section>
       </div>
 
@@ -424,6 +505,93 @@
             <div class="usage-chart-row">
               <div id="creditPieChart" class="pie-chart" role="img" aria-label="Credit usage by type chart"></div>
               <div id="creditUsageLegend" class="usage-legend"></div>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="admin-pricing tab-panel" id="creditUsage" data-panel="credit-usage">
+        <article class="admin-panel pricing-main-panel">
+          <div class="credit-panel-head">
+            <div>
+              <p class="eyebrow">Credit Usage</p>
+              <h2>yong_zhao usage history</h2>
+            </div>
+            <label>
+              Range
+              <select id="userUsageRange">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+              </select>
+            </label>
+          </div>
+          <div class="admin-summary">
+            <div>
+              <strong id="userTokenTotal">0</strong>
+              <small>Total tokens</small>
+            </div>
+            <div>
+              <strong id="userCreditBought">0</strong>
+              <small>Credits bought</small>
+            </div>
+            <div>
+              <strong id="userTopModel">-</strong>
+              <small>Top model</small>
+            </div>
+          </div>
+          <section class="chart-section" aria-label="Daily token usage">
+            <h3>Daily token burn out</h3>
+            <div id="userTokenLineChart" class="line-chart" role="img" aria-label="Daily total token usage chart"></div>
+          </section>
+          <section class="chart-section" aria-label="Daily usage by model">
+            <h3>Daily token usage by model</h3>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Model</th>
+                    <th>Input tokens</th>
+                    <th>Output tokens</th>
+                    <th>Total tokens</th>
+                  </tr>
+                </thead>
+                <tbody id="userDailyUsageRows">
+                  <tr><td colspan="5">Loading usage...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </article>
+        <aside class="admin-panel credit-panel">
+          <section class="chart-section" aria-label="User credit balance history">
+            <h3>Balance history</h3>
+            <div id="userBalanceLineChart" class="line-chart" role="img" aria-label="User credit balance history chart"></div>
+          </section>
+          <section class="chart-section" aria-label="Token usage by model">
+            <h3>Usage by model</h3>
+            <div class="usage-chart-row">
+              <div id="userModelPieChart" class="pie-chart" role="img" aria-label="Model token usage chart"></div>
+              <div id="userModelUsageLegend" class="usage-legend"></div>
+            </div>
+          </section>
+          <section class="chart-section" aria-label="Credit purchase history">
+            <h3>Credit purchase history</h3>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Credits</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="userCreditPurchaseRows">
+                  <tr><td colspan="4">Loading purchases...</td></tr>
+                </tbody>
+              </table>
             </div>
           </section>
         </aside>

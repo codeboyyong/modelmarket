@@ -287,6 +287,10 @@ button:hover,
   padding: 22px;
 }
 
+.account-dialog {
+  width: min(100%, 520px);
+}
+
 .dialog-head {
   display: flex;
   justify-content: space-between;
@@ -375,6 +379,60 @@ button:hover,
   color: var(--muted);
   font-size: 14px;
   text-align: center;
+}
+
+.auth-message.error {
+  color: #ef4444;
+  font-weight: 800;
+}
+
+.toggle-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.toggle-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.toggle-row input {
+  width: auto;
+  min-width: 18px;
+}
+
+.profile-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.profile-row span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.profile-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .hero {
@@ -1297,6 +1355,11 @@ table.pricing-table {
   padding: 12px;
   text-align: left;
   vertical-align: top;
+}
+
+[data-compact-tables="true"] .pricing-table th,
+[data-compact-tables="true"] .pricing-table td {
+  padding: 8px 10px;
 }
 
 .pricing-table th {

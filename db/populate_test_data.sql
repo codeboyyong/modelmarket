@@ -1,45 +1,46 @@
 -- Portable deterministic test data for Model Market.
 -- IDs are explicit so this file does not require database-specific UUID functions.
-
-DELETE FROM sys_provider_settlements;
-DELETE FROM sys_audit_logs;
-DELETE FROM user_webhook_endpoints;
-DELETE FROM user_budget_policies;
-DELETE FROM user_routing_policies;
-DELETE FROM user_async_jobs;
-DELETE FROM user_usage_events;
-DELETE FROM user_provider_attempts;
-DELETE FROM user_embedding_records;
-DELETE FROM user_file_extractions;
-DELETE FROM user_message_attachments;
-DELETE FROM user_workspace_assets;
-DELETE FROM user_messages;
-DELETE FROM user_inference_requests;
-DELETE FROM user_conversation_branches;
-DELETE FROM user_conversations;
-DELETE FROM sys_coupons;
-DELETE FROM user_invoices;
-DELETE FROM user_payments;
-DELETE FROM user_ledger_transactions;
-DELETE FROM user_wallets;
-DELETE FROM sys_price_rules;
-DELETE FROM sys_pricing_plans;
-DELETE FROM sys_model_configurations;
-DELETE FROM sys_model_profiles;
-DELETE FROM sys_model_versions;
-DELETE FROM sys_models;
-DELETE FROM sys_capabilities;
-DELETE FROM sys_provider_endpoints;
-DELETE FROM sys_providers;
-DELETE FROM user_api_keys;
-DELETE FROM user_projects;
-DELETE FROM user_companies;
-DELETE FROM sys_memberships;
-DELETE FROM sys_organizations;
-DELETE FROM sys_sessions;
-DELETE FROM sys_oauth_accounts;
-DELETE FROM sys_users;
-DELETE FROM sys_roles;
+--see db/delete_all_data.sql
+-- DELETE FROM sys_provider_settlements;
+-- DELETE FROM sys_audit_logs;
+-- DELETE FROM user_webhook_endpoints;
+-- DELETE FROM user_budget_policies;
+-- DELETE FROM user_routing_policies;
+-- DELETE FROM user_async_jobs;
+-- DELETE FROM user_usage_events;
+-- DELETE FROM user_provider_attempts;
+-- DELETE FROM user_embedding_records;
+-- DELETE FROM user_file_extractions;
+-- DELETE FROM user_message_attachments;
+-- DELETE FROM user_workspace_assets;
+-- DELETE FROM user_messages;
+-- DELETE FROM user_inference_requests;
+-- DELETE FROM user_conversation_branches;
+-- DELETE FROM user_conversations;
+-- DELETE FROM sys_coupons;
+-- DELETE FROM user_invoices;
+-- DELETE FROM user_payments;
+-- DELETE FROM user_credit_purchases;
+-- DELETE FROM user_ledger_transactions;
+-- DELETE FROM user_wallets;
+-- DELETE FROM sys_price_rules;
+-- DELETE FROM sys_pricing_plans;
+-- DELETE FROM sys_model_configurations;
+-- DELETE FROM sys_model_profiles;
+-- DELETE FROM sys_model_versions;
+-- DELETE FROM sys_models;
+-- DELETE FROM sys_capabilities;
+-- DELETE FROM sys_provider_endpoints;
+-- DELETE FROM sys_providers;
+-- DELETE FROM user_api_keys;
+-- DELETE FROM user_projects;
+-- DELETE FROM user_companies;
+-- DELETE FROM sys_memberships;
+-- DELETE FROM sys_organizations;
+-- DELETE FROM sys_sessions;
+-- DELETE FROM sys_oauth_accounts;
+-- DELETE FROM sys_users;
+-- DELETE FROM sys_roles;
 
 INSERT INTO sys_roles (id, name, description) VALUES
   ('role-owner', 'owner', 'Organization owner'),
@@ -50,6 +51,7 @@ INSERT INTO sys_roles (id, name, description) VALUES
 INSERT INTO sys_users (id, email, name, avatar_url, status, password_hash, user_type, company_id, ui_theme, language) VALUES
   ('user-admin', 'admin@example.com', 'Admin User', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'sys_admin', NULL, 'Light', 'EN'),
   ('user-developer', 'developer@example.com', 'Developer User', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'individual_consumer', NULL, 'Light', 'EN'),
+  ('user-yong-zhao', 'yong_zhao@example.com', 'yong_zhao', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'individual_consumer', NULL, 'Light', 'EN'),
   ('user-corp-admin', 'corp-admin@example.com', 'Corporate Admin', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_admin', 'company-acme', 'Light', 'EN'),
   ('user-corp-designer', 'designer@acme.example', 'Acme Designer', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_member', 'company-acme', 'Light', 'EN'),
   ('user-corp-producer', 'producer@acme.example', 'Acme Producer', NULL, 'active', '0f694fc3267fd0e17454bbe6dd6b4e163a41519495539195fd1567b476a15d75', 'corporate_member', 'company-acme', 'Light', 'EN');
@@ -70,6 +72,7 @@ INSERT INTO sys_organizations (id, name, slug, status) VALUES
 INSERT INTO sys_memberships (id, user_id, organization_id, role) VALUES
   ('membership-admin', 'user-admin', 'org-demo', 'owner'),
   ('membership-developer', 'user-developer', 'org-demo', 'developer'),
+  ('membership-yong-zhao', 'user-yong-zhao', 'org-demo', 'developer'),
   ('membership-corp-admin', 'user-corp-admin', 'org-acme', 'owner'),
   ('membership-corp-designer', 'user-corp-designer', 'org-acme', 'developer'),
   ('membership-corp-producer', 'user-corp-producer', 'org-acme', 'developer');
@@ -211,6 +214,12 @@ INSERT INTO user_ledger_transactions (id, wallet_id, transaction_type, amount, c
   ('ledger-dev-paid', 'wallet-demo', 'grant', 10000, 'paid', 'posted', 'dev seed paid credits', 'dev-seed-paid-credit-grant', '{}'),
   ('ledger-dev-promo', 'wallet-demo', 'grant', 5000, 'promotional', 'posted', 'dev seed promotional credits', 'dev-seed-promo-credit-grant', '{}');
 
+INSERT INTO user_credit_purchases (id, user_id, credits, amount_cents, currency, status, metadata, created_at) VALUES
+  ('purchase-yong-2026-06-06', 'user-yong-zhao', 5000, 5000, 'USD', 'posted', '{"payment_method":"visa ending 4242"}', '2026-06-06 10:12:00'),
+  ('purchase-yong-2026-05-22', 'user-yong-zhao', 10000, 10000, 'USD', 'posted', '{"payment_method":"visa ending 4242"}', '2026-05-22 09:30:00'),
+  ('purchase-yong-2026-04-26', 'user-yong-zhao', 5000, 5000, 'USD', 'posted', '{"payment_method":"visa ending 4242"}', '2026-04-26 14:45:00'),
+  ('purchase-yong-2026-03-29', 'user-yong-zhao', 20000, 20000, 'USD', 'posted', '{"payment_method":"bank transfer"}', '2026-03-29 16:20:00');
+
 INSERT INTO sys_coupons (id, code, credit_amount, status, metadata) VALUES
   ('coupon-dev-welcome', 'DEV-WELCOME', 1000, 'active', '{"description":"Development welcome coupon"}');
 
@@ -281,15 +290,35 @@ INSERT INTO user_inference_requests (id, project_id, actor_user_id, model_slug, 
 INSERT INTO user_provider_attempts (id, inference_request_id, provider_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
   ('attempt-demo', 'inference-demo', 'provider-mock', 'succeeded', 42, 'mock-request-1', NULL, '{}');
 
-INSERT INTO user_usage_events (id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, customer_charge, provider_cost, metadata) VALUES
-  ('usage-demo', 'project-demo', 'user-admin', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 1, 0, '{"mock":true}'),
-  ('usage-image-product-main', 'project-image-studio', 'user-developer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-main"}'),
-  ('usage-image-product-dark', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-dark"}'),
-  ('usage-image-avatar', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 10, 0, '{"conversation_id":"conversation-image-avatar"}'),
-  ('usage-video-launch', 'project-video-lab', 'user-developer', NULL, 'google/veo-3.1-fast', 'openrouter', 'video_generation', 100, 10, '{"conversation_id":"conversation-video-launch"}'),
-  ('usage-video-social', 'project-video-lab', 'user-developer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"conversation_id":"conversation-video-social"}'),
-  ('usage-acme-campaign-image', 'project-acme-brand', 'user-corp-designer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 10, 0, '{"company_id":"company-acme","conversation_id":"conversation-acme-campaign"}'),
-  ('usage-acme-training-video', 'project-acme-video', 'user-corp-producer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 70, 7, '{"company_id":"company-acme","conversation_id":"conversation-acme-training-video"}');
+INSERT INTO user_usage_events (id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, input_tokens, output_tokens, customer_charge, provider_cost, metadata, created_at) VALUES
+  ('usage-demo', 'project-demo', 'user-admin', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 12, 24, 1, 0, '{"mock":true}', '2026-06-08 08:00:00'),
+  ('usage-image-product-main', 'project-image-studio', 'user-developer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 520, 980, 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-main"}', '2026-06-05 12:00:00'),
+  ('usage-image-product-dark', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 610, 1120, 10, 0, '{"conversation_id":"conversation-image-product","branch_id":"branch-image-product-dark"}', '2026-06-05 12:15:00'),
+  ('usage-image-avatar', 'project-image-studio', 'user-developer', NULL, 'x-ai/grok-imagine-image-quality', 'openrouter', 'image_generation', 430, 760, 10, 0, '{"conversation_id":"conversation-image-avatar"}', '2026-05-30 10:00:00'),
+  ('usage-video-launch', 'project-video-lab', 'user-developer', NULL, 'google/veo-3.1-fast', 'openrouter', 'video_generation', 900, 1820, 100, 10, '{"conversation_id":"conversation-video-launch"}', '2026-05-28 15:00:00'),
+  ('usage-video-social', 'project-video-lab', 'user-developer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 840, 1640, 70, 7, '{"conversation_id":"conversation-video-social"}', '2026-05-27 15:00:00'),
+  ('usage-acme-campaign-image', 'project-acme-brand', 'user-corp-designer', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 510, 920, 10, 0, '{"company_id":"company-acme","conversation_id":"conversation-acme-campaign"}', '2026-06-07 09:30:00'),
+  ('usage-acme-training-video', 'project-acme-video', 'user-corp-producer', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 870, 1710, 70, 7, '{"company_id":"company-acme","conversation_id":"conversation-acme-training-video"}', '2026-06-07 11:20:00'),
+  ('usage-yong-001', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 860, 1690, 70, 7, '{"demo":"credit_usage"}', '2026-06-08 09:10:00'),
+  ('usage-yong-002', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 540, 980, 10, 0, '{"demo":"credit_usage"}', '2026-06-08 10:05:00'),
+  ('usage-yong-003', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 460, 820, 12, 2, '{"demo":"credit_usage"}', '2026-06-07 14:30:00'),
+  ('usage-yong-004', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 920, 1840, 70, 7, '{"demo":"credit_usage"}', '2026-06-06 16:15:00'),
+  ('usage-yong-005', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 590, 1040, 10, 0, '{"demo":"credit_usage"}', '2026-06-05 13:45:00'),
+  ('usage-yong-006', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 500, 910, 12, 2, '{"demo":"credit_usage"}', '2026-06-04 11:05:00'),
+  ('usage-yong-007', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 880, 1740, 70, 7, '{"demo":"credit_usage"}', '2026-06-03 18:25:00'),
+  ('usage-yong-008', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 620, 1160, 10, 0, '{"demo":"credit_usage"}', '2026-06-02 09:40:00'),
+  ('usage-yong-009', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 940, 1860, 70, 7, '{"demo":"credit_usage"}', '2026-06-01 17:10:00'),
+  ('usage-yong-010', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 420, 760, 12, 2, '{"demo":"credit_usage"}', '2026-05-29 12:30:00'),
+  ('usage-yong-011', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 560, 1010, 10, 0, '{"demo":"credit_usage"}', '2026-05-26 10:20:00'),
+  ('usage-yong-012', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 790, 1510, 70, 7, '{"demo":"credit_usage"}', '2026-05-23 16:05:00'),
+  ('usage-yong-013', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 470, 850, 12, 2, '{"demo":"credit_usage"}', '2026-05-20 11:55:00'),
+  ('usage-yong-014', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 640, 1190, 10, 0, '{"demo":"credit_usage"}', '2026-05-17 15:25:00'),
+  ('usage-yong-015', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 1010, 1960, 70, 7, '{"demo":"credit_usage"}', '2026-05-14 18:10:00'),
+  ('usage-yong-016', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 390, 700, 12, 2, '{"demo":"credit_usage"}', '2026-05-08 13:00:00'),
+  ('usage-yong-017', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 610, 1110, 10, 0, '{"demo":"credit_usage"}', '2026-04-28 09:35:00'),
+  ('usage-yong-018', 'project-demo', 'user-yong-zhao', NULL, 'x-ai/grok-imagine-video', 'openrouter', 'video_generation', 930, 1810, 70, 7, '{"demo":"credit_usage"}', '2026-04-18 17:45:00'),
+  ('usage-yong-019', 'project-demo', 'user-yong-zhao', NULL, 'openai/gpt-audio', 'openrouter', 'audio_generation', 440, 790, 12, 2, '{"demo":"credit_usage"}', '2026-03-31 12:15:00'),
+  ('usage-yong-020', 'project-demo', 'user-yong-zhao', NULL, 'microsoft/mai-image-2.5', 'openrouter', 'image_generation', 570, 1060, 10, 0, '{"demo":"credit_usage"}', '2026-03-20 10:50:00');
 
 INSERT INTO user_async_jobs (id, project_id, job_type, status, model_slug, provider_slug, metadata) VALUES
   ('job-demo-image', 'project-demo', 'image_generation', 'completed', 'mock-creative', 'mock-provider', '{"mock":true}');
