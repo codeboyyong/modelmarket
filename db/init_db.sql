@@ -143,6 +143,30 @@ CREATE TABLE IF NOT EXISTS sys_provider_endpoints (
   CONSTRAINT fk_provider_endpoints_provider FOREIGN KEY (provider_id) REFERENCES sys_providers(id)
 );
 
+-- System table: provider account/channel configuration used by the routing layer.
+CREATE TABLE IF NOT EXISTS sys_provider_channels (
+  id VARCHAR(64) PRIMARY KEY,
+  provider_id VARCHAR(64) NOT NULL,
+  endpoint_id VARCHAR(64),
+  name VARCHAR(255) NOT NULL,
+  channel_type VARCHAR(64) NOT NULL DEFAULT 'openai_compatible',
+  status VARCHAR(64) NOT NULL DEFAULT 'active',
+  base_url VARCHAR(1024),
+  credential_ref VARCHAR(255),
+  priority BIGINT NOT NULL DEFAULT 0,
+  weight BIGINT NOT NULL DEFAULT 100,
+  auto_disable BOOLEAN NOT NULL DEFAULT TRUE,
+  response_time_ms BIGINT,
+  last_health_check_at TIMESTAMP,
+  balance NUMERIC(18,8) NOT NULL DEFAULT 0,
+  metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  settings VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_provider_channels_provider FOREIGN KEY (provider_id) REFERENCES sys_providers(id),
+  CONSTRAINT fk_provider_channels_endpoint FOREIGN KEY (endpoint_id) REFERENCES sys_provider_endpoints(id)
+);
+
 -- System table: catalog of model capability labels used for discovery and filtering.
 CREATE TABLE IF NOT EXISTS sys_capabilities (
   id VARCHAR(64) PRIMARY KEY,
@@ -203,6 +227,30 @@ CREATE TABLE IF NOT EXISTS sys_model_configurations (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_model_configurations_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id),
   CONSTRAINT uq_sys_model_configuration_version UNIQUE (model_profile_id, version)
+);
+
+-- System table: routes marketplace models/profiles to provider channels and upstream model IDs.
+CREATE TABLE IF NOT EXISTS sys_channel_model_routes (
+  id VARCHAR(64) PRIMARY KEY,
+  channel_id VARCHAR(64) NOT NULL,
+  model_id VARCHAR(64) NOT NULL,
+  model_profile_id VARCHAR(64),
+  route_group VARCHAR(128) NOT NULL DEFAULT 'default',
+  upstream_model_id VARCHAR(255) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  priority BIGINT NOT NULL DEFAULT 0,
+  weight BIGINT NOT NULL DEFAULT 100,
+  status VARCHAR(64) NOT NULL DEFAULT 'active',
+  model_mapping VARCHAR(4000) NOT NULL DEFAULT '{}',
+  param_override VARCHAR(4000) NOT NULL DEFAULT '{}',
+  header_override VARCHAR(4000) NOT NULL DEFAULT '{}',
+  metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_channel_routes_channel FOREIGN KEY (channel_id) REFERENCES sys_provider_channels(id),
+  CONSTRAINT fk_channel_routes_model FOREIGN KEY (model_id) REFERENCES sys_models(id),
+  CONSTRAINT fk_channel_routes_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id),
+  CONSTRAINT uq_channel_route UNIQUE (channel_id, model_id, model_profile_id, route_group, upstream_model_id)
 );
 
 -- System table: model and profile price rules plus provider cost data.
@@ -411,6 +459,8 @@ CREATE TABLE IF NOT EXISTS user_inference_requests (
   actor_user_id VARCHAR(64),
   model_slug VARCHAR(255) NOT NULL,
   model_profile_id VARCHAR(64),
+  route_id VARCHAR(64),
+  channel_id VARCHAR(64),
   provider_slug VARCHAR(255) NOT NULL,
   status VARCHAR(64) NOT NULL,
   input_units BIGINT NOT NULL DEFAULT 0,
@@ -422,7 +472,9 @@ CREATE TABLE IF NOT EXISTS user_inference_requests (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_inference_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
   CONSTRAINT fk_inference_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id),
-  CONSTRAINT fk_inference_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id)
+  CONSTRAINT fk_inference_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id),
+  CONSTRAINT fk_inference_route FOREIGN KEY (route_id) REFERENCES sys_channel_model_routes(id),
+  CONSTRAINT fk_inference_channel FOREIGN KEY (channel_id) REFERENCES sys_provider_channels(id)
 );
 
 -- User table: provider-level attempts for an inference request, including latency and errors.
@@ -430,6 +482,8 @@ CREATE TABLE IF NOT EXISTS user_provider_attempts (
   id VARCHAR(64) PRIMARY KEY,
   inference_request_id VARCHAR(64) NOT NULL,
   provider_id VARCHAR(64) NOT NULL,
+  channel_id VARCHAR(64),
+  route_id VARCHAR(64),
   status VARCHAR(64) NOT NULL,
   latency_ms BIGINT,
   provider_request_id VARCHAR(255),
@@ -437,7 +491,9 @@ CREATE TABLE IF NOT EXISTS user_provider_attempts (
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_attempts_inference FOREIGN KEY (inference_request_id) REFERENCES user_inference_requests(id),
-  CONSTRAINT fk_attempts_provider FOREIGN KEY (provider_id) REFERENCES sys_providers(id)
+  CONSTRAINT fk_attempts_provider FOREIGN KEY (provider_id) REFERENCES sys_providers(id),
+  CONSTRAINT fk_attempts_channel FOREIGN KEY (channel_id) REFERENCES sys_provider_channels(id),
+  CONSTRAINT fk_attempts_route FOREIGN KEY (route_id) REFERENCES sys_channel_model_routes(id)
 );
 
 -- User table: metered usage events used for credit reporting and analytics.
@@ -561,9 +617,13 @@ ALTER TABLE user_wallets ALTER COLUMN project_id DROP NOT NULL;
 ALTER TABLE user_workbench_assets ADD COLUMN IF NOT EXISTS asset_origin VARCHAR(64) NOT NULL DEFAULT 'generated';
 ALTER TABLE user_workbench_assets ADD COLUMN IF NOT EXISTS branch_id VARCHAR(64);
 ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
+ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS route_id VARCHAR(64);
+ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS channel_id VARCHAR(64);
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_provider_attempts ADD COLUMN IF NOT EXISTS channel_id VARCHAR(64);
+ALTER TABLE user_provider_attempts ADD COLUMN IF NOT EXISTS route_id VARCHAR(64);
 
 ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_seq_id INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS pricing_variant VARCHAR(128) NOT NULL DEFAULT 'default';
@@ -647,6 +707,38 @@ END $$;
 
 DO $$
 BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_inference_route') THEN
+    ALTER TABLE user_inference_requests
+      ADD CONSTRAINT fk_inference_route FOREIGN KEY (route_id) REFERENCES sys_channel_model_routes(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_inference_channel') THEN
+    ALTER TABLE user_inference_requests
+      ADD CONSTRAINT fk_inference_channel FOREIGN KEY (channel_id) REFERENCES sys_provider_channels(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_attempts_channel') THEN
+    ALTER TABLE user_provider_attempts
+      ADD CONSTRAINT fk_attempts_channel FOREIGN KEY (channel_id) REFERENCES sys_provider_channels(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_attempts_route') THEN
+    ALTER TABLE user_provider_attempts
+      ADD CONSTRAINT fk_attempts_route FOREIGN KEY (route_id) REFERENCES sys_channel_model_routes(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_inference_actor') THEN
     ALTER TABLE user_inference_requests
       ADD CONSTRAINT fk_inference_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id);
@@ -669,12 +761,16 @@ CREATE INDEX IF NOT EXISTS idx_user_wallets_company ON user_wallets(company_id);
 CREATE INDEX IF NOT EXISTS idx_user_credit_purchases_user_created ON user_credit_purchases(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sys_models_provider ON sys_models(provider_id);
 CREATE INDEX IF NOT EXISTS idx_sys_model_profiles_model ON sys_model_profiles(model_id);
+CREATE INDEX IF NOT EXISTS idx_sys_provider_channels_provider ON sys_provider_channels(provider_id);
+CREATE INDEX IF NOT EXISTS idx_sys_channel_routes_model_group ON sys_channel_model_routes(model_id, model_profile_id, route_group, enabled, status);
+CREATE INDEX IF NOT EXISTS idx_sys_channel_routes_channel ON sys_channel_model_routes(channel_id);
 CREATE INDEX IF NOT EXISTS idx_user_messages_conversation ON user_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_messages_inference ON user_messages(inference_request_id);
 CREATE INDEX IF NOT EXISTS idx_user_usage_project_created ON user_usage_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_usage_actor_created ON user_usage_events(actor_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_project_created ON user_inference_requests(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_actor_created ON user_inference_requests(actor_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_inference_route ON user_inference_requests(route_id);
 CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_project_created ON user_workbench_assets(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_branch_created ON user_workbench_assets(branch_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_inference ON user_workbench_assets(inference_request_id);

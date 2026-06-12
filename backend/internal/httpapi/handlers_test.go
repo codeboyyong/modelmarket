@@ -279,8 +279,15 @@ func TestChatCompletions(t *testing.T) {
 	mock.ExpectQuery("select project_id from user_api_keys").
 		WithArgs(hashAPIKey(apiKey)).
 		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
+	mock.ExpectQuery("select r.id, r.route_group, m.slug").
+		WithArgs("default", "mock-chat").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "priority", "weight", "coalesce"}).
+			AddRow("route-mock-chat-primary", "default", "mock-chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", int64(100), int64(100), int64(42)))
 	mock.ExpectExec("insert into user_inference_requests").
-		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1)).
+		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_provider_attempts").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-mock", "channel-mock-primary", "route-mock-chat-primary", int64(42), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))

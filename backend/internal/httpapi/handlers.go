@@ -1215,7 +1215,12 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
 		return
 	}
-	content := "Mock response from " + req.Model
+	route, err := a.selectModelRoute(r.Context(), req.Model, "default")
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
+		return
+	}
+	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
 	if len(req.Messages) > 0 {
 		content = "Mock response to: " + req.Messages[len(req.Messages)-1].Content
 	}
@@ -1223,8 +1228,17 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	customerCharge := int64(1)
 	providerCost := int64(0)
 	_, err = a.DB.ExecContext(r.Context(), `
-		insert into user_inference_requests(id, project_id, model_slug, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin)
-		values($1, $2, $3, 'mock-provider', 'succeeded', $4, $5, $6, $7, $8)`, requestID, projectID, req.Model, len(req.Messages), len(content), customerCharge, providerCost, customerCharge-providerCost)
+		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
+		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
+		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, len(req.Messages), len(content), customerCharge, providerCost, customerCharge-providerCost, fmt.Sprintf(`{"requested_model":%q,"upstream_model_id":%q,"route_group":%q}`, req.Model, route.UpstreamModelID, route.RouteGroup))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	_, err = a.DB.ExecContext(r.Context(), `
+		insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
+		values($1, $2, $3, $4, $5, 'succeeded', $6, $7, null, $8)`,
+		"attempt_"+randomHex(12), requestID, route.ProviderID, route.ChannelID, route.ID, route.ResponseTimeMS, "mock-"+randomHex(8), fmt.Sprintf(`{"upstream_model_id":%q,"channel_name":%q}`, route.UpstreamModelID, route.ChannelName))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1239,10 +1253,91 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{
 		"id":      requestID,
 		"object":  "chat.completion",
-		"model":   req.Model,
+		"model":   route.UpstreamModelID,
+		"route":   response{"id": route.ID, "channel_id": route.ChannelID, "channel_name": route.ChannelName, "provider": route.ProviderSlug, "requested_model": req.Model},
 		"choices": []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
 		"usage":   response{"prompt_tokens": len(req.Messages), "completion_tokens": len(content), "total_tokens": len(req.Messages) + len(content)},
 	})
+}
+
+type selectedModelRoute struct {
+	ID              string
+	RouteGroup      string
+	ModelSlug       string
+	ModelProfileID  string
+	UpstreamModelID string
+	ProviderID      string
+	ProviderSlug    string
+	ChannelID       string
+	ChannelName     string
+	Priority        int64
+	Weight          int64
+	ResponseTimeMS  int64
+}
+
+func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup string) (selectedModelRoute, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select r.id, r.route_group, m.slug, coalesce(mp.id, ''), r.upstream_model_id,
+			p.id, p.slug, c.id, c.name, r.priority, r.weight, coalesce(c.response_time_ms, 0)
+		from sys_channel_model_routes r
+		join sys_provider_channels c on c.id = r.channel_id
+		join sys_providers p on p.id = c.provider_id
+		join sys_models m on m.id = r.model_id
+		left join sys_model_profiles mp on mp.id = r.model_profile_id
+		where r.enabled = true
+			and r.status = 'active'
+			and c.status = 'active'
+			and p.status = 'active'
+			and r.route_group = $1
+			and (m.slug = $2 or mp.slug = $2)
+		order by r.priority desc, r.weight desc, r.id asc`, routeGroup, requestedModel)
+	if err != nil {
+		return selectedModelRoute{}, err
+	}
+	defer rows.Close()
+
+	candidates := []selectedModelRoute{}
+	var topPriority *int64
+	for rows.Next() {
+		var route selectedModelRoute
+		if err := rows.Scan(&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelProfileID, &route.UpstreamModelID, &route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.Priority, &route.Weight, &route.ResponseTimeMS); err != nil {
+			return selectedModelRoute{}, err
+		}
+		if topPriority == nil {
+			value := route.Priority
+			topPriority = &value
+		}
+		if route.Priority != *topPriority {
+			break
+		}
+		candidates = append(candidates, route)
+	}
+	if err := rows.Err(); err != nil {
+		return selectedModelRoute{}, err
+	}
+	if len(candidates) == 0 {
+		return selectedModelRoute{}, sql.ErrNoRows
+	}
+	totalWeight := int64(0)
+	for _, route := range candidates {
+		if route.Weight <= 0 {
+			totalWeight += 1
+		} else {
+			totalWeight += route.Weight
+		}
+	}
+	pick := time.Now().UnixNano() % totalWeight
+	for _, route := range candidates {
+		weight := route.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		pick -= weight
+		if pick < 0 {
+			return route, nil
+		}
+	}
+	return candidates[0], nil
 }
 
 func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, model, prompt, answer string, customerCharge, providerCost int64) error {
@@ -1298,6 +1393,13 @@ func nullableString(value sql.NullString) any {
 		return value.String
 	}
 	return nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func messageRoleRank(role string) int {

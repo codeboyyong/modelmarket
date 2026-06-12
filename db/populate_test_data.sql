@@ -24,11 +24,13 @@
 -- DELETE FROM user_ledger_transactions;
 -- DELETE FROM user_wallets;
 -- DELETE FROM sys_price_rules;
+-- DELETE FROM sys_channel_model_routes;
 -- DELETE FROM sys_model_configurations;
 -- DELETE FROM sys_model_profiles;
 -- DELETE FROM sys_model_versions;
 -- DELETE FROM sys_models;
 -- DELETE FROM sys_capabilities;
+-- DELETE FROM sys_provider_channels;
 -- DELETE FROM sys_provider_endpoints;
 -- DELETE FROM sys_providers;
 -- DELETE FROM user_api_keys;
@@ -113,13 +115,25 @@ INSERT INTO user_api_keys (id, project_id, name, prefix, key_hash, scopes, statu
 
 INSERT INTO sys_providers (id, slug, name, status, endpoint_url, credential_ref, metadata) VALUES
   ('provider-mock', 'mock-provider', 'Mock Provider', 'active', 'mock://provider', NULL, '{"mode":"dev","supports_streaming":true}'),
+  ('provider-google-gemini', 'google-gemini', 'Google Gemini', 'active', 'https://generativelanguage.googleapis.com/v1beta', 'GEMINI_API_KEY', '{"source":"https://ai.google.dev/gemini-api","supports_multimodal":true}'),
   ('provider-openrouter', 'openrouter', 'OpenRouter', 'active', 'https://openrouter.ai/api/v1', 'OPENROUTER_API_KEY', '{"source":"https://openrouter.ai/models","supports_multimodal":true}'),
   ('provider-openai-placeholder', 'openai-placeholder', 'OpenAI Placeholder', 'inactive', 'https://api.openai.com', 'OPENAI_API_KEY', '{"enabled_by_default":false}');
 
 INSERT INTO sys_provider_endpoints (id, provider_id, name, endpoint_url, region, status, metadata) VALUES
   ('endpoint-mock-default', 'provider-mock', 'Mock Default Endpoint', 'mock://provider/default', 'local', 'active', '{}'),
+  ('endpoint-gemini-free', 'provider-google-gemini', 'Gemini Free Tier Endpoint', 'https://generativelanguage.googleapis.com/v1beta', 'global', 'active', '{"models_url":"https://generativelanguage.googleapis.com/v1beta/models"}'),
   ('endpoint-openrouter-default', 'provider-openrouter', 'OpenRouter Default Endpoint', 'https://openrouter.ai/api/v1', 'global', 'active', '{"models_url":"https://openrouter.ai/api/v1/models","video_models_url":"https://openrouter.ai/api/v1/videos/models"}'),
   ('endpoint-openai-default', 'provider-openai-placeholder', 'OpenAI Default Endpoint', 'https://api.openai.com', 'global', 'inactive', '{}');
+
+INSERT INTO sys_provider_channels (
+  id, provider_id, endpoint_id, name, channel_type, status, base_url, credential_ref, priority, weight,
+  auto_disable, response_time_ms, balance, metadata, settings
+) VALUES
+  ('channel-mock-primary', 'provider-mock', 'endpoint-mock-default', 'Mock Primary Channel', 'openai_compatible', 'active', 'mock://provider/default', NULL, 100, 80, true, 42, 0, '{"mode":"local","routing_demo":true}', '{}'),
+  ('channel-mock-backup', 'provider-mock', 'endpoint-mock-default', 'Mock Backup Channel', 'openai_compatible', 'active', 'mock://provider/backup', NULL, 100, 20, true, 60, 0, '{"mode":"local","routing_demo":true}', '{}'),
+  ('channel-gemini-free', 'provider-google-gemini', 'endpoint-gemini-free', 'Gemini Free Channel', 'google_gemini', 'active', 'https://generativelanguage.googleapis.com/v1beta', 'GEMINI_API_KEY', 95, 100, true, 140, 0, '{"tier":"free","requires_env":"GEMINI_API_KEY","ready_for_upstream":false}', '{"api_version":"v1beta"}'),
+  ('channel-openrouter-default', 'provider-openrouter', 'endpoint-openrouter-default', 'OpenRouter Default Channel', 'openai_compatible', 'active', 'https://openrouter.ai/api/v1', 'OPENROUTER_API_KEY', 90, 100, true, 180, 0, '{"source":"openrouter","supports_multimodal":true}', '{}'),
+  ('channel-openai-placeholder', 'provider-openai-placeholder', 'endpoint-openai-default', 'OpenAI Placeholder Channel', 'openai_compatible', 'inactive', 'https://api.openai.com', 'OPENAI_API_KEY', 10, 10, true, NULL, 0, '{"enabled_by_default":false}', '{}');
 
 INSERT INTO sys_capabilities (id, slug, name, description) VALUES
   ('cap-chat', 'chat', 'Chat', 'Chat completion support'),
@@ -130,6 +144,7 @@ INSERT INTO sys_capabilities (id, slug, name, description) VALUES
 INSERT INTO sys_models (id, provider_id, slug, name, modality, status, context_window, capabilities, metadata) VALUES
   ('model-mock-chat', 'provider-mock', 'mock-chat', 'Mock Chat', 'chat', 'public', 8192, '{"chat":true,"streaming":true,"files":false}', '{"quality_tier":"dev"}'),
   ('model-mock-creative', 'provider-mock', 'mock-creative', 'Mock Creative', 'image', 'public', 0, '{"image_generation":true,"async_jobs":true}', '{"quality_tier":"dev"}'),
+  ('model-gemini-25-flash-free', 'provider-google-gemini', 'gemini-2.5-flash', 'Google: Gemini 2.5 Flash (free)', 'chat', 'public', 1048576, '{"chat":true,"streaming":true,"image_input":true,"audio_input":true}', '{"google_model_id":"gemini-2.5-flash","tier":"free","credential_ref":"GEMINI_API_KEY"}'),
   ('model-openrouter-riverflow-v25-pro-free', 'provider-openrouter', 'sourceful/riverflow-v2.5-pro:free', 'Sourceful: Riverflow V2.5 Pro (free)', 'image', 'public', 8192, '{"image_generation":true,"image_input":true}', '{"openrouter_id":"sourceful/riverflow-v2.5-pro:free","canonical_slug":"sourceful/riverflow-v2.5-pro-20260605"}'),
   ('model-openrouter-riverflow-v25-fast-free', 'provider-openrouter', 'sourceful/riverflow-v2.5-fast:free', 'Sourceful: Riverflow V2.5 Fast (free)', 'image', 'public', 8192, '{"image_generation":true,"image_input":true}', '{"openrouter_id":"sourceful/riverflow-v2.5-fast:free","canonical_slug":"sourceful/riverflow-v2.5-fast-20260605"}'),
   ('model-openrouter-mai-image-25', 'provider-openrouter', 'microsoft/mai-image-2.5', 'Microsoft: MAI-Image-2.5', 'image', 'public', 4096, '{"image_generation":true,"image_input":true}', '{"openrouter_id":"microsoft/mai-image-2.5","canonical_slug":"microsoft/mai-image-2.5"}'),
@@ -146,6 +161,7 @@ INSERT INTO sys_models (id, provider_id, slug, name, modality, status, context_w
 INSERT INTO sys_model_versions (id, model_id, version, status, metadata) VALUES
   ('model-version-mock-chat-dev', 'model-mock-chat', 'dev', 'active', '{}'),
   ('model-version-mock-creative-dev', 'model-mock-creative', 'dev', 'active', '{}'),
+  ('model-version-gemini-25-flash-free', 'model-gemini-25-flash-free', '2.5-flash', 'active', '{"source":"google-gemini"}'),
   ('model-version-openrouter-riverflow-v25-pro-free', 'model-openrouter-riverflow-v25-pro-free', '20260605', 'active', '{}'),
   ('model-version-openrouter-riverflow-v25-fast-free', 'model-openrouter-riverflow-v25-fast-free', '20260605', 'active', '{}'),
   ('model-version-openrouter-mai-image-25', 'model-openrouter-mai-image-25', 'current', 'active', '{}'),
@@ -162,6 +178,7 @@ INSERT INTO sys_model_versions (id, model_id, version, status, metadata) VALUES
 INSERT INTO sys_model_profiles (id, model_id, slug, name, status, system_prompt, default_parameters, safety_settings, config_version) VALUES
   ('profile-mock-chat-default', 'model-mock-chat', 'mock-chat-default', 'Mock Chat Default', 'public', 'You are a helpful mocked assistant for local development.', '{"temperature":0.2,"max_tokens":512}', '{"moderation":"mock"}', 1),
   ('profile-mock-creative-default', 'model-mock-creative', 'mock-creative-default', 'Mock Creative Default', 'public', 'Generate deterministic local development assets.', '{"size":"1024x1024"}', '{"moderation":"mock"}', 1),
+  ('profile-gemini-25-flash-free-default', 'model-gemini-25-flash-free', 'gemini-2-5-flash-free-default', 'Google: Gemini 2.5 Flash Free Default', 'public', 'You are a concise assistant routed through the Gemini free channel.', '{"temperature":0.4,"max_output_tokens":1024}', '{"moderation":"provider"}', 1),
   ('profile-openrouter-riverflow-v25-pro-free-default', 'model-openrouter-riverflow-v25-pro-free', 'sourceful-riverflow-v2-5-pro-free-default', 'Sourceful: Riverflow V2.5 Pro (free) Default', 'public', 'Generate high-quality images through OpenRouter.', '{"modalities":["image"],"size":"1024x1024"}', '{"moderation":"provider"}', 1),
   ('profile-openrouter-riverflow-v25-fast-free-default', 'model-openrouter-riverflow-v25-fast-free', 'sourceful-riverflow-v2-5-fast-free-default', 'Sourceful: Riverflow V2.5 Fast (free) Default', 'public', 'Generate fast images through OpenRouter.', '{"modalities":["image"],"size":"1024x1024"}', '{"moderation":"provider"}', 1),
   ('profile-openrouter-mai-image-25-default', 'model-openrouter-mai-image-25', 'microsoft-mai-image-2-5-default', 'Microsoft: MAI-Image-2.5 Default', 'public', 'Generate images through OpenRouter.', '{"modalities":["image"],"size":"1024x1024"}', '{"moderation":"provider"}', 1),
@@ -178,6 +195,7 @@ INSERT INTO sys_model_profiles (id, model_id, slug, name, status, system_prompt,
 INSERT INTO sys_model_configurations (id, model_profile_id, version, config_data, status) VALUES
   ('config-mock-chat-v1', 'profile-mock-chat-default', 1, '{"system_prompt":"You are a helpful mocked assistant for local development.","temperature":0.2,"max_tokens":512}', 'published'),
   ('config-mock-creative-v1', 'profile-mock-creative-default', 1, '{"system_prompt":"Generate deterministic local development assets.","size":"1024x1024"}', 'published'),
+  ('config-gemini-25-flash-free-v1', 'profile-gemini-25-flash-free-default', 1, '{"model":"gemini-2.5-flash","temperature":0.4,"max_output_tokens":1024}', 'published'),
   ('config-openrouter-riverflow-v25-pro-free-v1', 'profile-openrouter-riverflow-v25-pro-free-default', 1, '{"model":"sourceful/riverflow-v2.5-pro:free","modalities":["image"],"size":"1024x1024"}', 'published'),
   ('config-openrouter-riverflow-v25-fast-free-v1', 'profile-openrouter-riverflow-v25-fast-free-default', 1, '{"model":"sourceful/riverflow-v2.5-fast:free","modalities":["image"],"size":"1024x1024"}', 'published'),
   ('config-openrouter-mai-image-25-v1', 'profile-openrouter-mai-image-25-default', 1, '{"model":"microsoft/mai-image-2.5","modalities":["image"],"size":"1024x1024"}', 'published'),
@@ -190,6 +208,27 @@ INSERT INTO sys_model_configurations (id, model_profile_id, version, config_data
   ('config-openrouter-lyria-3-clip-preview-v1', 'profile-openrouter-lyria-3-clip-preview-default', 1, '{"model":"google/lyria-3-clip-preview","modalities":["text","audio"],"duration_seconds":30}', 'published'),
   ('config-openrouter-gpt-audio-v1', 'profile-openrouter-gpt-audio-default', 1, '{"model":"openai/gpt-audio","modalities":["text","audio"],"voice":"alloy"}', 'published'),
   ('config-openrouter-gpt-audio-mini-v1', 'profile-openrouter-gpt-audio-mini-default', 1, '{"model":"openai/gpt-audio-mini","modalities":["text","audio"],"voice":"alloy"}', 'published');
+
+INSERT INTO sys_channel_model_routes (
+  id, channel_id, model_id, model_profile_id, route_group, upstream_model_id, enabled, priority, weight,
+  status, model_mapping, param_override, header_override, metadata
+) VALUES
+  ('route-mock-chat-primary', 'channel-mock-primary', 'model-mock-chat', 'profile-mock-chat-default', 'default', 'mock-chat', true, 100, 80, 'active', '{"mock-chat":"mock-chat"}', '{}', '{}', '{"routing_demo":"primary"}'),
+  ('route-mock-chat-backup', 'channel-mock-backup', 'model-mock-chat', 'profile-mock-chat-default', 'default', 'mock-chat', true, 100, 20, 'active', '{"mock-chat":"mock-chat"}', '{}', '{}', '{"routing_demo":"backup"}'),
+  ('route-mock-creative-primary', 'channel-mock-primary', 'model-mock-creative', 'profile-mock-creative-default', 'default', 'mock-creative', true, 100, 100, 'active', '{"mock-creative":"mock-creative"}', '{}', '{}', '{"routing_demo":"mock-image"}'),
+  ('route-gemini-25-flash-free', 'channel-gemini-free', 'model-gemini-25-flash-free', 'profile-gemini-25-flash-free-default', 'default', 'gemini-2.5-flash', true, 95, 100, 'active', '{"gemini-2.5-flash":"gemini-2.5-flash","gemini-2-5-flash-free-default":"gemini-2.5-flash"}', '{}', '{}', '{"source":"google-gemini","pricing":"free","credential_ref":"GEMINI_API_KEY"}'),
+  ('route-openrouter-riverflow-v25-pro-free', 'channel-openrouter-default', 'model-openrouter-riverflow-v25-pro-free', 'profile-openrouter-riverflow-v25-pro-free-default', 'default', 'sourceful/riverflow-v2.5-pro:free', true, 90, 100, 'active', '{"sourceful/riverflow-v2.5-pro:free":"sourceful/riverflow-v2.5-pro:free"}', '{}', '{}', '{"source":"openrouter","pricing":"free"}'),
+  ('route-openrouter-riverflow-v25-fast-free', 'channel-openrouter-default', 'model-openrouter-riverflow-v25-fast-free', 'profile-openrouter-riverflow-v25-fast-free-default', 'default', 'sourceful/riverflow-v2.5-fast:free', true, 90, 100, 'active', '{"sourceful/riverflow-v2.5-fast:free":"sourceful/riverflow-v2.5-fast:free"}', '{}', '{}', '{"source":"openrouter","pricing":"free"}'),
+  ('route-openrouter-mai-image-25', 'channel-openrouter-default', 'model-openrouter-mai-image-25', 'profile-openrouter-mai-image-25-default', 'default', 'microsoft/mai-image-2.5', true, 90, 100, 'active', '{"microsoft/mai-image-2.5":"microsoft/mai-image-2.5"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-grok-imagine-image-quality', 'channel-openrouter-default', 'model-openrouter-grok-imagine-image-quality', 'profile-openrouter-grok-imagine-image-quality-default', 'default', 'x-ai/grok-imagine-image-quality', true, 90, 100, 'active', '{"x-ai/grok-imagine-image-quality":"x-ai/grok-imagine-image-quality"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-grok-imagine-video', 'channel-openrouter-default', 'model-openrouter-grok-imagine-video', 'profile-openrouter-grok-imagine-video-default', 'default', 'x-ai/grok-imagine-video', true, 90, 100, 'active', '{"x-ai/grok-imagine-video":"x-ai/grok-imagine-video"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-kling-v30-pro', 'channel-openrouter-default', 'model-openrouter-kling-v30-pro', 'profile-openrouter-kling-v30-pro-default', 'default', 'kwaivgi/kling-v3.0-pro', true, 90, 100, 'active', '{"kwaivgi/kling-v3.0-pro":"kwaivgi/kling-v3.0-pro"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-kling-v30-std', 'channel-openrouter-default', 'model-openrouter-kling-v30-std', 'profile-openrouter-kling-v30-std-default', 'default', 'kwaivgi/kling-v3.0-std', true, 90, 100, 'active', '{"kwaivgi/kling-v3.0-std":"kwaivgi/kling-v3.0-std"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-veo-31-fast', 'channel-openrouter-default', 'model-openrouter-veo-31-fast', 'profile-openrouter-veo-31-fast-default', 'default', 'google/veo-3.1-fast', true, 90, 100, 'active', '{"google/veo-3.1-fast":"google/veo-3.1-fast"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-lyria-3-pro-preview', 'channel-openrouter-default', 'model-openrouter-lyria-3-pro-preview', 'profile-openrouter-lyria-3-pro-preview-default', 'default', 'google/lyria-3-pro-preview', true, 90, 100, 'active', '{"google/lyria-3-pro-preview":"google/lyria-3-pro-preview"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-lyria-3-clip-preview', 'channel-openrouter-default', 'model-openrouter-lyria-3-clip-preview', 'profile-openrouter-lyria-3-clip-preview-default', 'default', 'google/lyria-3-clip-preview', true, 90, 100, 'active', '{"google/lyria-3-clip-preview":"google/lyria-3-clip-preview"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-gpt-audio', 'channel-openrouter-default', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 'default', 'openai/gpt-audio', true, 90, 100, 'active', '{"openai/gpt-audio":"openai/gpt-audio"}', '{}', '{}', '{"source":"openrouter"}'),
+  ('route-openrouter-gpt-audio-mini', 'channel-openrouter-default', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 'default', 'openai/gpt-audio-mini', true, 90, 100, 'active', '{"openai/gpt-audio-mini":"openai/gpt-audio-mini"}', '{}', '{}', '{"source":"openrouter"}');
 
 INSERT INTO sys_price_rules (
   id,
@@ -208,6 +247,8 @@ INSERT INTO sys_price_rules (
   ('price-mock-chat-input', 'model-mock-chat', 'profile-mock-chat-default', 1, 'default', 'input', '1k_tokens', 0.001, 'CREDIT', 0, 'USD', '{}'),
   ('price-mock-chat-output', 'model-mock-chat', 'profile-mock-chat-default', 2, 'default', 'output', '1k_tokens', 0.002, 'CREDIT', 0, 'USD', '{}'),
   ('price-mock-creative-image', 'model-mock-creative', 'profile-mock-creative-default', 1, 'standard', 'output', 'image', 10, 'CREDIT', 0, 'USD', '{"resolution":"1024x1024"}'),
+  ('price-gemini-25-flash-free-input', 'model-gemini-25-flash-free', 'profile-gemini-25-flash-free-default', 1, 'free_tier', 'input', '1k_tokens', 0, 'CREDIT', 0, 'USD', '{"source":"google-gemini","pricing":"free_tier"}'),
+  ('price-gemini-25-flash-free-output', 'model-gemini-25-flash-free', 'profile-gemini-25-flash-free-default', 2, 'free_tier', 'output', '1k_tokens', 0, 'CREDIT', 0, 'USD', '{"source":"google-gemini","pricing":"free_tier"}'),
   ('price-openrouter-riverflow-v25-pro-free-image', 'model-openrouter-riverflow-v25-pro-free', 'profile-openrouter-riverflow-v25-pro-free-default', 1, 'standard', 'output', 'image', 0, 'CREDIT', 0, 'USD', '{"source":"openrouter","pricing":"free","resolution":"1024x1024"}'),
   ('price-openrouter-riverflow-v25-fast-free-image', 'model-openrouter-riverflow-v25-fast-free', 'profile-openrouter-riverflow-v25-fast-free-default', 1, 'standard', 'output', 'image', 0, 'CREDIT', 0, 'USD', '{"source":"openrouter","pricing":"free","resolution":"1024x1024"}'),
   ('price-openrouter-mai-image-25-input', 'model-openrouter-mai-image-25', 'profile-openrouter-mai-image-25-default', 1, 'default', 'input', '1k_tokens', 0.005, 'CREDIT', 0.005, 'USD', '{"source":"openrouter","prompt_price":"0.000005"}'),
@@ -304,11 +345,11 @@ INSERT INTO user_file_extractions (id, asset_id, extracted_text, metadata) VALUE
 INSERT INTO user_embedding_records (id, project_id, source_type, source_id, embedding_model, vector_ref, metadata) VALUES
   ('embedding-demo-text', 'project-demo', 'asset', 'asset-demo-text', 'mock-embedding', 'mock://vectors/embedding-demo-text', '{}');
 
-INSERT INTO user_inference_requests (id, project_id, actor_user_id, model_slug, model_profile_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
-  ('inference-demo', 'project-demo', 'user-admin', 'mock-chat', 'profile-mock-chat-default', 'mock-provider', 'succeeded', 12, 24, 1, 0, 1, '{"mock":true}');
+INSERT INTO user_inference_requests (id, project_id, actor_user_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata) VALUES
+  ('inference-demo', 'project-demo', 'user-admin', 'mock-chat', 'profile-mock-chat-default', 'route-mock-chat-primary', 'channel-mock-primary', 'mock-provider', 'succeeded', 12, 24, 1, 0, 1, '{"mock":true}');
 
-INSERT INTO user_provider_attempts (id, inference_request_id, provider_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
-  ('attempt-demo', 'inference-demo', 'provider-mock', 'succeeded', 42, 'mock-request-1', NULL, '{}');
+INSERT INTO user_provider_attempts (id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata) VALUES
+  ('attempt-demo', 'inference-demo', 'provider-mock', 'channel-mock-primary', 'route-mock-chat-primary', 'succeeded', 42, 'mock-request-1', NULL, '{}');
 
 INSERT INTO user_usage_events (id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, input_tokens, output_tokens, customer_charge, provider_cost, metadata, created_at) VALUES
   ('usage-demo', 'project-demo', 'user-admin', 'inference-demo', 'mock-chat', 'mock-provider', 'chat_completion', 12, 24, 1, 0, '{"mock":true}', '2026-06-08 08:00:00'),
