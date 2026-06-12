@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -1203,13 +1206,10 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Model          string `json:"model"`
-		ConversationID string `json:"conversation_id"`
-		BranchID       string `json:"branch_id"`
-		Messages       []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
+		Model          string        `json:"model"`
+		ConversationID string        `json:"conversation_id"`
+		BranchID       string        `json:"branch_id"`
+		Messages       []chatMessage `json:"messages"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
@@ -1220,17 +1220,19 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
 		return
 	}
-	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
-	if len(req.Messages) > 0 {
-		content = "Mock response to: " + req.Messages[len(req.Messages)-1].Content
+	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, response{"error": "upstream_failed", "provider": route.ProviderSlug, "channel_id": route.ChannelID, "message": err.Error()})
+		return
 	}
+	content := upstream.Content
 	requestID := "req_" + randomHex(12)
 	customerCharge := int64(1)
 	providerCost := int64(0)
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
 		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
-		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, len(req.Messages), len(content), customerCharge, providerCost, customerCharge-providerCost, fmt.Sprintf(`{"requested_model":%q,"upstream_model_id":%q,"route_group":%q}`, req.Model, route.UpstreamModelID, route.RouteGroup))
+		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, customerCharge, providerCost, customerCharge-providerCost, fmt.Sprintf(`{"requested_model":%q,"upstream_model_id":%q,"route_group":%q}`, req.Model, route.UpstreamModelID, route.RouteGroup))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1238,7 +1240,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
 		values($1, $2, $3, $4, $5, 'succeeded', $6, $7, null, $8)`,
-		"attempt_"+randomHex(12), requestID, route.ProviderID, route.ChannelID, route.ID, route.ResponseTimeMS, "mock-"+randomHex(8), fmt.Sprintf(`{"upstream_model_id":%q,"channel_name":%q}`, route.UpstreamModelID, route.ChannelName))
+		"attempt_"+randomHex(12), requestID, route.ProviderID, route.ChannelID, route.ID, upstream.LatencyMS, upstream.ProviderRequestID, fmt.Sprintf(`{"upstream_model_id":%q,"channel_name":%q,"channel_type":%q}`, route.UpstreamModelID, route.ChannelName, route.ChannelType))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1256,8 +1258,171 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		"model":   route.UpstreamModelID,
 		"route":   response{"id": route.ID, "channel_id": route.ChannelID, "channel_name": route.ChannelName, "provider": route.ProviderSlug, "requested_model": req.Model},
 		"choices": []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
-		"usage":   response{"prompt_tokens": len(req.Messages), "completion_tokens": len(content), "total_tokens": len(req.Messages) + len(content)},
+		"usage":   response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens},
 	})
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type upstreamChatResult struct {
+	Content           string
+	PromptTokens      int
+	CompletionTokens  int
+	LatencyMS         int64
+	ProviderRequestID string
+}
+
+func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
+	if route.ChannelType == "google_gemini" {
+		return a.callGeminiGenerateContent(ctx, route, messages)
+	}
+	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
+	if len(messages) > 0 {
+		content = "Mock response to: " + messages[len(messages)-1].Content
+	}
+	return upstreamChatResult{
+		Content:           content,
+		PromptTokens:      len(messages),
+		CompletionTokens:  len(content),
+		LatencyMS:         route.ResponseTimeMS,
+		ProviderRequestID: "mock-" + randomHex(8),
+	}, nil
+}
+
+func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
+	apiKeyName := strings.TrimSpace(route.CredentialRef)
+	if apiKeyName == "" {
+		apiKeyName = "GEMINI_API_KEY"
+	}
+	apiKey := strings.TrimSpace(os.Getenv(apiKeyName))
+	if apiKey == "" {
+		return upstreamChatResult{}, fmt.Errorf("%s is not set", apiKeyName)
+	}
+
+	type geminiPart struct {
+		Text string `json:"text"`
+	}
+	type geminiContent struct {
+		Role  string       `json:"role,omitempty"`
+		Parts []geminiPart `json:"parts"`
+	}
+	payload := struct {
+		SystemInstruction *struct {
+			Parts []geminiPart `json:"parts"`
+		} `json:"system_instruction,omitempty"`
+		Contents []geminiContent `json:"contents"`
+	}{}
+
+	systemParts := []geminiPart{}
+	for _, message := range messages {
+		text := strings.TrimSpace(message.Content)
+		if text == "" {
+			continue
+		}
+		switch strings.ToLower(message.Role) {
+		case "system":
+			systemParts = append(systemParts, geminiPart{Text: text})
+		case "assistant", "model":
+			payload.Contents = append(payload.Contents, geminiContent{Role: "model", Parts: []geminiPart{{Text: text}}})
+		default:
+			payload.Contents = append(payload.Contents, geminiContent{Role: "user", Parts: []geminiPart{{Text: text}}})
+		}
+	}
+	if len(systemParts) > 0 {
+		payload.SystemInstruction = &struct {
+			Parts []geminiPart `json:"parts"`
+		}{Parts: systemParts}
+	}
+	if len(payload.Contents) == 0 {
+		payload.Contents = []geminiContent{{Role: "user", Parts: []geminiPart{{Text: "Hello"}}}}
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return upstreamChatResult{}, err
+	}
+	baseURL := strings.TrimRight(route.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	endpoint := baseURL + "/models/" + route.UpstreamModelID + ":generateContent"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return upstreamChatResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", apiKey)
+
+	client := a.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	start := time.Now()
+	resp, err := client.Do(httpReq)
+	latencyMS := time.Since(start).Milliseconds()
+	if err != nil {
+		return upstreamChatResult{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return upstreamChatResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return upstreamChatResult{}, fmt.Errorf("gemini status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+			FinishReason string `json:"finishReason"`
+		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return upstreamChatResult{}, err
+	}
+	parts := []string{}
+	for _, candidate := range parsed.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if strings.TrimSpace(part.Text) != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		if len(parts) > 0 {
+			break
+		}
+	}
+	content := strings.TrimSpace(strings.Join(parts, "\n"))
+	if content == "" {
+		return upstreamChatResult{}, errors.New("gemini returned no text")
+	}
+	promptTokens := parsed.UsageMetadata.PromptTokenCount
+	completionTokens := parsed.UsageMetadata.CandidatesTokenCount
+	if promptTokens == 0 {
+		promptTokens = len(messages)
+	}
+	if completionTokens == 0 {
+		completionTokens = len(content)
+	}
+	return upstreamChatResult{
+		Content:           content,
+		PromptTokens:      promptTokens,
+		CompletionTokens:  completionTokens,
+		LatencyMS:         latencyMS,
+		ProviderRequestID: resp.Header.Get("x-request-id"),
+	}, nil
 }
 
 type selectedModelRoute struct {
@@ -1270,6 +1435,9 @@ type selectedModelRoute struct {
 	ProviderSlug    string
 	ChannelID       string
 	ChannelName     string
+	ChannelType     string
+	BaseURL         string
+	CredentialRef   string
 	Priority        int64
 	Weight          int64
 	ResponseTimeMS  int64
@@ -1278,7 +1446,8 @@ type selectedModelRoute struct {
 func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup string) (selectedModelRoute, error) {
 	rows, err := a.DB.QueryContext(ctx, `
 		select r.id, r.route_group, m.slug, coalesce(mp.id, ''), r.upstream_model_id,
-			p.id, p.slug, c.id, c.name, r.priority, r.weight, coalesce(c.response_time_ms, 0)
+			p.id, p.slug, c.id, c.name, c.channel_type, coalesce(c.base_url, ''), coalesce(c.credential_ref, ''),
+			r.priority, r.weight, coalesce(c.response_time_ms, 0)
 		from sys_channel_model_routes r
 		join sys_provider_channels c on c.id = r.channel_id
 		join sys_providers p on p.id = c.provider_id
@@ -1300,7 +1469,7 @@ func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup s
 	var topPriority *int64
 	for rows.Next() {
 		var route selectedModelRoute
-		if err := rows.Scan(&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelProfileID, &route.UpstreamModelID, &route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.Priority, &route.Weight, &route.ResponseTimeMS); err != nil {
+		if err := rows.Scan(&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelProfileID, &route.UpstreamModelID, &route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.ChannelType, &route.BaseURL, &route.CredentialRef, &route.Priority, &route.Weight, &route.ResponseTimeMS); err != nil {
 			return selectedModelRoute{}, err
 		}
 		if topPriority == nil {

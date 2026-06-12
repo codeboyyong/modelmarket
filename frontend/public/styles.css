@@ -1001,6 +1001,29 @@ textarea {
   background: var(--chip);
 }
 
+.message.pending-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .context-menu {
   position: fixed;
   z-index: 60;
@@ -1041,6 +1064,22 @@ textarea {
   flex: 1 1 auto;
   min-height: 68px;
   resize: vertical;
+}
+
+#sendPrompt {
+  min-width: 92px;
+  justify-content: center;
+}
+
+#sendPrompt.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#sendPrompt:disabled {
+  cursor: wait;
+  opacity: 0.78;
 }
 
 pre {

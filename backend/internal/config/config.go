@@ -1,10 +1,12 @@
 package config
 
 import (
+	"bufio"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -31,6 +33,7 @@ type Config struct {
 }
 
 func Load() Config {
+	loadDotEnvFiles()
 	appEnv := env("MM_APP_ENV", "dev")
 	dbSSLMode := env("MM_DB_SSL_MODE", defaultDBSSLMode(appEnv))
 	dbHost := env("MM_DB_HOST", "localhost")
@@ -62,6 +65,44 @@ func Load() Config {
 		AssetPublicURL:   strings.TrimRight(env("MM_ASSET_PUBLIC_URL", ""), "/"),
 		LogLevelName:     env("LOG_LEVEL", "info"),
 		PublicURL:        env("PUBLIC_URL", "http://localhost:3000"),
+	}
+}
+
+func loadDotEnvFiles() {
+	paths := []string{".env", filepath.Join("..", ".env")}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		loadDotEnv(path)
+	}
+}
+
+func loadDotEnv(path string) {
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+			continue
+		}
+		key, value, _ := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		_ = os.Setenv(key, value)
 	}
 }
 

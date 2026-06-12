@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,12 @@ type fakeRedis struct {
 
 func (f fakeRedis) Ping(_ context.Context) error {
 	return f.err
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func testApp(t *testing.T) (*App, sqlmock.Sqlmock, func()) {
@@ -281,8 +288,8 @@ func TestChatCompletions(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
 	mock.ExpectQuery("select r.id, r.route_group, m.slug").
 		WithArgs("default", "mock-chat").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "priority", "weight", "coalesce"}).
-			AddRow("route-mock-chat-primary", "default", "mock-chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", int64(100), int64(100), int64(42)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
+			AddRow("route-mock-chat-primary", "default", "mock-chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", "openai_compatible", "mock://provider/default", "", int64(100), int64(100), int64(42)))
 	mock.ExpectExec("insert into user_inference_requests").
 		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -305,6 +312,90 @@ func TestChatCompletions(t *testing.T) {
 	}
 	if id, ok := body["id"].(string); !ok || !strings.HasPrefix(id, "req_") {
 		t.Fatalf("unexpected request id: %v", body["id"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChatCompletionsCallsGemini(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	t.Setenv("TEST_GEMINI_API_KEY", "test-gemini-key")
+	app.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://gemini.test/models/gemini-test:generateContent" {
+			t.Fatalf("unexpected upstream url: %s", r.URL.String())
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "test-gemini-key" {
+			t.Fatalf("unexpected gemini api key header: %q", got)
+		}
+		var body struct {
+			Contents []struct {
+				Role  string `json:"role"`
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"contents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Contents) != 1 || body.Contents[0].Role != "user" || body.Contents[0].Parts[0].Text != "hello gemini" {
+			t.Fatalf("unexpected gemini payload: %+v", body)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"real gemini response"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":5,"totalTokenCount":12}}`)),
+			Request:    r,
+		}, nil
+	})}
+
+	apiKey := "mk_test"
+	mock.ExpectQuery("select project_id from user_api_keys").
+		WithArgs(hashAPIKey(apiKey)).
+		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
+	mock.ExpectQuery("select r.id, r.route_group, m.slug").
+		WithArgs("default", "gemini-2-5-flash-free-default").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
+			AddRow("route-gemini-test", "default", "gemini-2.5-flash", "profile-gemini-test", "gemini-test", "provider-google-gemini", "google-gemini", "channel-gemini-free", "Gemini Free Channel", "google_gemini", "https://gemini.test", "TEST_GEMINI_API_KEY", int64(95), int64(100), int64(140)))
+	mock.ExpectExec("insert into user_inference_requests").
+		WithArgs(sqlmock.AnyArg(), "project-1", "gemini-2.5-flash", "profile-gemini-test", "route-gemini-test", "channel-gemini-free", "google-gemini", 7, 5, int64(1), int64(0), int64(1), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_provider_attempts").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-google-gemini", "channel-gemini-free", "route-gemini-test", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"gemini-2-5-flash-free-default","messages":[{"role":"user","content":"hello gemini"}]}`))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Choices) != 1 || body.Choices[0].Message.Content != "real gemini response" {
+		t.Fatalf("unexpected response body: %s", rec.Body.String())
+	}
+	if body.Usage.PromptTokens != 7 || body.Usage.CompletionTokens != 5 || body.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected usage: %+v", body.Usage)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

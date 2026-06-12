@@ -18,6 +18,7 @@ type App struct {
 	DB     *sql.DB
 	Redis  RedisPinger
 	Logger *slog.Logger
+	Client *http.Client
 }
 
 func (a *App) Routes() http.Handler {

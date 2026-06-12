@@ -212,6 +212,7 @@ let conversationPickerOpen = false;
 let currentConversationID = "";
 let currentBranchID = "";
 let branchSourceMessageID = "";
+let promptSending = false;
 const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -790,20 +791,34 @@ async function createKey() {
 }
 
 async function sendPrompt() {
+  if (promptSending) return;
   if (!currentAPIKey) await createKey();
   if (!currentConversationID) throw new Error("Select or create a conversation first.");
   const model = selectedWorkbenchModel || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
-  const prompt = ($("prompt") as HTMLTextAreaElement).value;
+  const promptInput = $("prompt") as HTMLTextAreaElement;
+  const prompt = promptInput.value.trim();
+  if (!prompt) return;
   appendMessage("user", prompt);
-  const data = await request<ChatResponse>("/api/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${currentAPIKey}` },
-    body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }] })
-  });
-  const answer = data.choices?.[0]?.message?.content || "Mock response received from backend.";
-  appendMessage("assistant", answer);
-  await loadSummary();
-  await loadWorkspace();
+  promptInput.value = "";
+  const waitingID = appendWaitingMessage();
+  setPromptSending(true);
+  try {
+    const data = await request<ChatResponse>("/api/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${currentAPIKey}` },
+      body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }] })
+    });
+    const answer = data.choices?.[0]?.message?.content || "Response received from backend.";
+    replaceWaitingMessage(waitingID, answer);
+    await loadSummary();
+    await loadWorkspace();
+  } catch (error) {
+    removeWaitingMessage(waitingID);
+    promptInput.value = prompt;
+    throw error;
+  } finally {
+    setPromptSending(false);
+  }
 }
 
 async function uploadAssetFile(file: File) {
@@ -828,6 +843,36 @@ function appendMessage(role: "user" | "assistant", content: string) {
   const transcript = $("chatTranscript");
   transcript.insertAdjacentHTML("beforeend", `<div class="message ${role}">${escapeHTML(content)}</div>`);
   transcript.scrollTop = transcript.scrollHeight;
+}
+
+function appendWaitingMessage() {
+  const id = `waiting-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const transcript = $("chatTranscript");
+  transcript.insertAdjacentHTML("beforeend", `<div class="message assistant pending-message" id="${id}" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Waiting for model response</span></div>`);
+  transcript.scrollTop = transcript.scrollHeight;
+  return id;
+}
+
+function replaceWaitingMessage(id: string, content: string) {
+  const message = document.getElementById(id);
+  if (message) {
+    message.className = "message assistant";
+    message.textContent = content;
+    return;
+  }
+  appendMessage("assistant", content);
+}
+
+function removeWaitingMessage(id: string) {
+  document.getElementById(id)?.remove();
+}
+
+function setPromptSending(isSending: boolean) {
+  promptSending = isSending;
+  const button = $("sendPrompt") as HTMLButtonElement;
+  button.disabled = isSending;
+  button.classList.toggle("loading", isSending);
+  button.innerHTML = isSending ? '<span class="spinner" aria-hidden="true"></span><span>Sending</span>' : "Send";
 }
 
 function renderMetadata() {
