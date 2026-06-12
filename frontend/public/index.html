@@ -148,6 +148,7 @@
             <label>
               Default workbench type
               <select id="settingsWorkbenchType">
+                <option value="chat">Chat</option>
                 <option value="image">Image</option>
                 <option value="audio">Audio</option>
                 <option value="video">Video</option>
@@ -286,6 +287,7 @@
             </label>
             <div class="modality-tabs" role="tablist" aria-label="Filter models by modality">
               <button class="filter-tab active" type="button" data-modality="all">All</button>
+              <button class="filter-tab" type="button" data-modality="chat">Chat</button>
               <button class="filter-tab" type="button" data-modality="image">Image</button>
               <button class="filter-tab" type="button" data-modality="audio">Audio</button>
               <button class="filter-tab" type="button" data-modality="video">Video</button>
@@ -359,7 +361,8 @@
             </div>
             <div class="picker-controls">
               <div class="modality-tabs" role="tablist" aria-label="Workbench model modality">
-                <button class="filter-tab active" type="button" data-workbench-modality="image">Image</button>
+                <button class="filter-tab active" type="button" data-workbench-modality="chat">Chat</button>
+                <button class="filter-tab" type="button" data-workbench-modality="image">Image</button>
                 <button class="filter-tab" type="button" data-workbench-modality="audio">Audio</button>
                 <button class="filter-tab" type="button" data-workbench-modality="video">Video</button>
               </div>
@@ -512,6 +515,7 @@
             </label>
             <div class="modality-tabs" role="tablist" aria-label="Filter pricing by model type">
               <button class="filter-tab active" type="button" data-pricing-modality="all">All</button>
+              <button class="filter-tab" type="button" data-pricing-modality="chat">Chat</button>
               <button class="filter-tab" type="button" data-pricing-modality="image">Image</button>
               <button class="filter-tab" type="button" data-pricing-modality="audio">Audio</button>
               <button class="filter-tab" type="button" data-pricing-modality="video">Video</button>
@@ -523,12 +527,13 @@
                 <tr>
                   <th>Provider</th>
                   <th>Model</th>
-                  <th>Input price</th>
-                  <th>Output price</th>
+                  <th>Type / variant</th>
+                  <th>Price</th>
+                  <th>Metadata</th>
                 </tr>
               </thead>
               <tbody id="pricingRows">
-                <tr><td colspan="4">Loading pricing...</td></tr>
+                <tr><td colspan="5">Loading pricing...</td></tr>
               </tbody>
             </table>
           </div>

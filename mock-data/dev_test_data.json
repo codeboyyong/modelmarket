@@ -65,16 +65,30 @@
           "max_tokens": 512
         }
       },
-      "price": {
-        "input_token_price": 0.1,
-        "input_token_price_unit": "1k_tokens",
-        "output_token_price": 0.6,
-        "output_token_price_unit": "1k_tokens",
-        "provider_input_token_cost": 0,
-        "provider_input_token_cost_unit": "1k_tokens",
-        "provider_output_token_cost": 0,
-        "provider_output_token_cost_unit": "1k_tokens"
-      }
+      "price_rules": [
+        {
+          "price_seq_id": 1,
+          "pricing_variant": "default",
+          "price_type": "input",
+          "price_unit": "1k_tokens",
+          "price": 0.1,
+          "currency": "CREDIT",
+          "provider_price": 0,
+          "provider_currency": "USD",
+          "price_metadata": {}
+        },
+        {
+          "price_seq_id": 2,
+          "pricing_variant": "default",
+          "price_type": "output",
+          "price_unit": "1k_tokens",
+          "price": 0.6,
+          "currency": "CREDIT",
+          "provider_price": 0,
+          "provider_currency": "USD",
+          "price_metadata": {}
+        }
+      ]
     },
     {
       "provider_slug": "mock-provider",
@@ -94,16 +108,21 @@
           "size": "1024x1024"
         }
       },
-      "price": {
-        "input_token_price": 0,
-        "input_token_price_unit": "prompt",
-        "output_token_price": 10,
-        "output_token_price_unit": "image_1024",
-        "provider_input_token_cost": 0,
-        "provider_input_token_cost_unit": "prompt",
-        "provider_output_token_cost": 0,
-        "provider_output_token_cost_unit": "image_1024"
-      }
+      "price_rules": [
+        {
+          "price_seq_id": 1,
+          "pricing_variant": "standard",
+          "price_type": "output",
+          "price_unit": "image",
+          "price": 10,
+          "currency": "CREDIT",
+          "provider_price": 0,
+          "provider_currency": "USD",
+          "price_metadata": {
+            "resolution": "1024x1024"
+          }
+        }
+      ]
     }
   ],
   "conversation": {

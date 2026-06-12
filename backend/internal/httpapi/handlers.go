@@ -370,14 +370,13 @@ func (a *App) models(w http.ResponseWriter, r *http.Request) {
 func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select p.name, m.name, m.slug, m.modality, coalesce(mp.name, ''), coalesce(mp.slug, ''),
-			pr.input_token_price, pr.input_token_price_unit,
-			pr.output_token_price, pr.output_token_price_unit,
-			pr.currency
+			pr.price_seq_id, pr.pricing_variant, pr.price_type, pr.price_unit, pr.price,
+			pr.currency, pr.provider_price, pr.provider_currency, pr.price_metadata, pr.status
 		from sys_price_rules pr
 		join sys_models m on m.id = pr.model_id
 		join sys_providers p on p.id = m.provider_id
 		left join sys_model_profiles mp on mp.id = pr.model_profile_id
-		order by p.name, m.modality, m.name`)
+		order by p.name, m.modality, m.name, pr.price_seq_id, pr.price_type`)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -385,9 +384,10 @@ func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var provider, modelName, modelSlug, modality, profileName, profileSlug, inputUnit, outputUnit, currency string
-		var inputPrice, outputPrice float64
-		if err := rows.Scan(&provider, &modelName, &modelSlug, &modality, &profileName, &profileSlug, &inputPrice, &inputUnit, &outputPrice, &outputUnit, &currency); err != nil {
+		var provider, modelName, modelSlug, modality, profileName, profileSlug, pricingVariant, priceType, priceUnit, currency, providerCurrency, priceMetadata, status string
+		var priceSeqID int
+		var price, providerPrice float64
+		if err := rows.Scan(&provider, &modelName, &modelSlug, &modality, &profileName, &profileSlug, &priceSeqID, &pricingVariant, &priceType, &priceUnit, &price, &currency, &providerPrice, &providerCurrency, &priceMetadata, &status); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
@@ -398,11 +398,16 @@ func (a *App) pricing(w http.ResponseWriter, r *http.Request) {
 			"modality":          modality,
 			"profile":           profileName,
 			"profile_slug":      profileSlug,
-			"input_price":       inputPrice,
-			"input_price_unit":  inputUnit,
-			"output_price":      outputPrice,
-			"output_price_unit": outputUnit,
+			"price_seq_id":      priceSeqID,
+			"pricing_variant":   pricingVariant,
+			"price_type":        priceType,
+			"price_unit":        priceUnit,
+			"price":             price,
 			"currency":          currency,
+			"provider_price":    providerPrice,
+			"provider_currency": providerCurrency,
+			"price_metadata":    priceMetadata,
+			"status":            status,
 		})
 	}
 	writeJSON(w, http.StatusOK, response{"pricing": items})
@@ -1023,11 +1028,11 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select id, coalesce(conversation_id, ''), asset_type, storage_path, storage_provider,
+		select id, coalesce(conversation_id, ''), coalesce(branch_id, ''), asset_type, asset_origin, storage_path, storage_provider,
 			coalesce(bucket_name, ''), coalesce(object_key, ''), coalesce(download_url, ''),
 			coalesce(mime_type, ''), coalesce(size_bytes, 0), coalesce(inference_request_id, ''),
 			customer_charge, provider_cost, metadata, created_at
-		from user_workspace_assets
+		from user_workbench_assets
 		where project_id = $1
 		order by created_at desc`, projectID)
 	if err != nil {
@@ -1037,14 +1042,14 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, conversationID, assetType, storagePath, storageProvider, bucketName, objectKey, downloadURL, mimeType, inferenceRequestID, metadata string
+		var id, conversationID, branchID, assetType, assetOrigin, storagePath, storageProvider, bucketName, objectKey, downloadURL, mimeType, inferenceRequestID, metadata string
 		var sizeBytes, customerCharge, providerCost int64
 		var createdAt time.Time
-		if err := rows.Scan(&id, &conversationID, &assetType, &storagePath, &storageProvider, &bucketName, &objectKey, &downloadURL, &mimeType, &sizeBytes, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
+		if err := rows.Scan(&id, &conversationID, &branchID, &assetType, &assetOrigin, &storagePath, &storageProvider, &bucketName, &objectKey, &downloadURL, &mimeType, &sizeBytes, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "conversation_id": conversationID, "asset_type": assetType, "storage_path": storagePath, "storage_provider": storageProvider, "bucket_name": bucketName, "object_key": objectKey, "download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
+		items = append(items, response{"id": id, "conversation_id": conversationID, "branch_id": branchID, "asset_type": assetType, "asset_origin": assetOrigin, "storage_path": storagePath, "storage_provider": storageProvider, "bucket_name": bucketName, "object_key": objectKey, "download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
 	}
 	writeJSON(w, http.StatusOK, response{"assets": items})
 }
@@ -1083,9 +1088,9 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 	uploadURL := downloadURL
 
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into user_workspace_assets(id, project_id, conversation_id, asset_type, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, metadata)
-		values($1, $2, nullif($3, ''), $4, $5, 's3', $6, $7, $8, $9, $10, $11)`,
-		assetID, req.ProjectID, req.ConversationID, assetType, storagePath, bucket, objectKey, downloadURL, contentType, req.SizeBytes, fmt.Sprintf(`{"filename":%q,"upload_mode":"presigned"}`, req.Filename))
+		insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, metadata)
+		values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'uploaded', $6, 's3', $7, $8, $9, $10, $11, $12)`,
+		assetID, req.ProjectID, req.ConversationID, req.BranchID, assetType, storagePath, bucket, objectKey, downloadURL, contentType, req.SizeBytes, fmt.Sprintf(`{"filename":%q,"upload_mode":"presigned"}`, req.Filename))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1112,7 +1117,7 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, response{
 		"asset": response{
-			"id": assetID, "project_id": req.ProjectID, "conversation_id": req.ConversationID, "asset_type": assetType,
+			"id": assetID, "project_id": req.ProjectID, "conversation_id": req.ConversationID, "branch_id": req.BranchID, "asset_type": assetType, "asset_origin": "uploaded",
 			"storage_path": storagePath, "storage_provider": "s3", "bucket_name": bucket, "object_key": objectKey,
 			"download_url": downloadURL, "mime_type": contentType, "size_bytes": req.SizeBytes,
 		},

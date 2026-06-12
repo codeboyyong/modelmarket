@@ -376,3 +376,12 @@ Next phase:
 * https://www.atlascloud.ai/
 * https://openrouter.ai/
 * https://siliconflow.cn/  
+
+
+
+  price_type : input/output
+  asset_type: token/image/video/audio
+  unit_type : 1k_token/480P/720P/1080P/2k/4K/
+  unit:
+  unit_price: 
+ 

@@ -12,7 +12,7 @@
 -- DELETE FROM user_embedding_records;
 -- DELETE FROM user_file_extractions;
 -- DELETE FROM user_message_attachments;
--- DELETE FROM user_workspace_assets;
+-- DELETE FROM user_workbench_assets;
 -- DELETE FROM user_messages;
 -- DELETE FROM user_inference_requests;
 -- DELETE FROM user_conversation_branches;
@@ -24,7 +24,6 @@
 -- DELETE FROM user_ledger_transactions;
 -- DELETE FROM user_wallets;
 -- DELETE FROM sys_price_rules;
--- DELETE FROM sys_pricing_plans;
 -- DELETE FROM sys_model_configurations;
 -- DELETE FROM sys_model_profiles;
 -- DELETE FROM sys_model_versions;
@@ -192,38 +191,38 @@ INSERT INTO sys_model_configurations (id, model_profile_id, version, config_data
   ('config-openrouter-gpt-audio-v1', 'profile-openrouter-gpt-audio-default', 1, '{"model":"openai/gpt-audio","modalities":["text","audio"],"voice":"alloy"}', 'published'),
   ('config-openrouter-gpt-audio-mini-v1', 'profile-openrouter-gpt-audio-mini-default', 1, '{"model":"openai/gpt-audio-mini","modalities":["text","audio"],"voice":"alloy"}', 'published');
 
-INSERT INTO sys_pricing_plans (id, slug, name, status, metadata) VALUES
-  ('plan-developer', 'developer', 'Developer', 'active', '{"default":true}');
-
 INSERT INTO sys_price_rules (
   id,
   model_id,
   model_profile_id,
-  input_token_price,
-  input_token_price_unit,
-  output_token_price,
-  output_token_price_unit,
-  provider_input_token_cost,
-  provider_input_token_cost_unit,
-  provider_output_token_cost,
-  provider_output_token_cost_unit,
+  price_seq_id,
+  pricing_variant,
+  price_type,
+  price_unit,
+  price,
   currency,
-  metadata
+  provider_price,
+  provider_currency,
+  price_metadata
 ) VALUES
-  ('price-mock-chat-request', 'model-mock-chat', 'profile-mock-chat-default', 0.001, '1k_tokens', 0.002, '1k_tokens', 0, '1k_tokens', 0, '1k_tokens', 'CREDIT', '{}'),
-  ('price-mock-creative-image', 'model-mock-creative', 'profile-mock-creative-default', 0, 'request', 10, 'image', 0, 'request', 0, 'image', 'CREDIT', '{}'),
-  ('price-openrouter-riverflow-v25-pro-free-image', 'model-openrouter-riverflow-v25-pro-free', 'profile-openrouter-riverflow-v25-pro-free-default', 0, 'request', 0, 'image', 0, 'request', 0, 'image', 'CREDIT', '{"source":"openrouter","pricing":"free"}'),
-  ('price-openrouter-riverflow-v25-fast-free-image', 'model-openrouter-riverflow-v25-fast-free', 'profile-openrouter-riverflow-v25-fast-free-default', 0, 'request', 0, 'image', 0, 'request', 0, 'image', 'CREDIT', '{"source":"openrouter","pricing":"free"}'),
-  ('price-openrouter-mai-image-25-image', 'model-openrouter-mai-image-25', 'profile-openrouter-mai-image-25-default', 0.005, '1k_tokens', 10, 'image', 0.005, '1k_tokens', 0, 'image', 'CREDIT', '{"source":"openrouter","prompt_price":"0.000005"}'),
-  ('price-openrouter-grok-imagine-image-quality-image', 'model-openrouter-grok-imagine-image-quality', 'profile-openrouter-grok-imagine-image-quality-default', 0, 'request', 10, 'image', 0, 'request', 0.01, 'image', 'CREDIT', '{"source":"openrouter","image_price_usd":"0.01"}'),
-  ('price-openrouter-grok-imagine-video-second', 'model-openrouter-grok-imagine-video', 'profile-openrouter-grok-imagine-video-default', 0, 'request', 70, 'second_720p', 0, 'request', 0.07, 'second_720p', 'CREDIT', '{"source":"openrouter","cents_per_video_output_second_720p":"7"}'),
-  ('price-openrouter-kling-v30-pro-second', 'model-openrouter-kling-v30-pro', 'profile-openrouter-kling-v30-pro-default', 0, 'request', 112, 'second_720p', 0, 'request', 0.112, 'second_720p', 'CREDIT', '{"source":"openrouter","duration_seconds":"0.112"}'),
-  ('price-openrouter-kling-v30-std-second', 'model-openrouter-kling-v30-std', 'profile-openrouter-kling-v30-std-default', 0, 'request', 84, 'second_720p', 0, 'request', 0.084, 'second_720p', 'CREDIT', '{"source":"openrouter","duration_seconds":"0.084"}'),
-  ('price-openrouter-veo-31-fast-second', 'model-openrouter-veo-31-fast', 'profile-openrouter-veo-31-fast-default', 0, 'request', 100, 'second_720p', 0, 'request', 0.10, 'second_720p', 'CREDIT', '{"source":"openrouter","duration_seconds_with_audio_720p":"0.10"}'),
-  ('price-openrouter-lyria-3-pro-preview-song', 'model-openrouter-lyria-3-pro-preview', 'profile-openrouter-lyria-3-pro-preview-default', 0, 'request', 80, 'song', 0, 'request', 0.08, 'song', 'CREDIT', '{"source":"openrouter","song_price_usd":"0.08"}'),
-  ('price-openrouter-lyria-3-clip-preview-clip', 'model-openrouter-lyria-3-clip-preview', 'profile-openrouter-lyria-3-clip-preview-default', 0, 'request', 40, 'clip', 0, 'request', 0.04, 'clip', 'CREDIT', '{"source":"openrouter","clip_price_usd":"0.04"}'),
-  ('price-openrouter-gpt-audio-audio', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 0.0025, '1k_tokens', 0.01, '1k_tokens', 0.0025, '1k_tokens', 0.01, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.000032"}'),
-  ('price-openrouter-gpt-audio-mini-audio', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 0.0006, '1k_tokens', 0.0024, '1k_tokens', 'CREDIT', '{"source":"openrouter","audio_price":"0.0000006"}');
+  ('price-mock-chat-input', 'model-mock-chat', 'profile-mock-chat-default', 1, 'default', 'input', '1k_tokens', 0.001, 'CREDIT', 0, 'USD', '{}'),
+  ('price-mock-chat-output', 'model-mock-chat', 'profile-mock-chat-default', 2, 'default', 'output', '1k_tokens', 0.002, 'CREDIT', 0, 'USD', '{}'),
+  ('price-mock-creative-image', 'model-mock-creative', 'profile-mock-creative-default', 1, 'standard', 'output', 'image', 10, 'CREDIT', 0, 'USD', '{"resolution":"1024x1024"}'),
+  ('price-openrouter-riverflow-v25-pro-free-image', 'model-openrouter-riverflow-v25-pro-free', 'profile-openrouter-riverflow-v25-pro-free-default', 1, 'standard', 'output', 'image', 0, 'CREDIT', 0, 'USD', '{"source":"openrouter","pricing":"free","resolution":"1024x1024"}'),
+  ('price-openrouter-riverflow-v25-fast-free-image', 'model-openrouter-riverflow-v25-fast-free', 'profile-openrouter-riverflow-v25-fast-free-default', 1, 'standard', 'output', 'image', 0, 'CREDIT', 0, 'USD', '{"source":"openrouter","pricing":"free","resolution":"1024x1024"}'),
+  ('price-openrouter-mai-image-25-input', 'model-openrouter-mai-image-25', 'profile-openrouter-mai-image-25-default', 1, 'default', 'input', '1k_tokens', 0.005, 'CREDIT', 0.005, 'USD', '{"source":"openrouter","prompt_price":"0.000005"}'),
+  ('price-openrouter-mai-image-25-image', 'model-openrouter-mai-image-25', 'profile-openrouter-mai-image-25-default', 2, 'standard', 'output', 'image', 10, 'CREDIT', 0, 'USD', '{"source":"openrouter","resolution":"1024x1024"}'),
+  ('price-openrouter-grok-imagine-image-quality-image', 'model-openrouter-grok-imagine-image-quality', 'profile-openrouter-grok-imagine-image-quality-default', 1, 'quality', 'output', 'image', 10, 'CREDIT', 0.01, 'USD', '{"source":"openrouter","aspect_ratio_multipliers":{"square":1,"widescreen_16_9":1.25,"vertical_9_16":1.25},"hd_enhancement_flat_fee":2}'),
+  ('price-openrouter-grok-imagine-video-second', 'model-openrouter-grok-imagine-video', 'profile-openrouter-grok-imagine-video-default', 1, '720p', 'output', 'second_video', 70, 'CREDIT', 0.07, 'USD', '{"source":"openrouter","resolution":"720p","audio_included":true}'),
+  ('price-openrouter-kling-v30-pro-second', 'model-openrouter-kling-v30-pro', 'profile-openrouter-kling-v30-pro-default', 1, '720p_pro', 'output', 'second_video', 112, 'CREDIT', 0.112, 'USD', '{"source":"openrouter","resolution":"720p","quality":"pro","audio_included":true}'),
+  ('price-openrouter-kling-v30-std-second', 'model-openrouter-kling-v30-std', 'profile-openrouter-kling-v30-std-default', 1, '720p_standard', 'output', 'second_video', 84, 'CREDIT', 0.084, 'USD', '{"source":"openrouter","resolution":"720p","quality":"standard","audio_included":true}'),
+  ('price-openrouter-veo-31-fast-second', 'model-openrouter-veo-31-fast', 'profile-openrouter-veo-31-fast-default', 1, '720p_fast', 'output', 'second_video', 100, 'CREDIT', 0.10, 'USD', '{"source":"openrouter","resolution":"720p","quality":"fast","audio_included":true}'),
+  ('price-openrouter-lyria-3-pro-preview-song', 'model-openrouter-lyria-3-pro-preview', 'profile-openrouter-lyria-3-pro-preview-default', 1, 'full_song', 'output', 'song', 80, 'CREDIT', 0.08, 'USD', '{"source":"openrouter","music_generation":true}'),
+  ('price-openrouter-lyria-3-clip-preview-clip', 'model-openrouter-lyria-3-clip-preview', 'profile-openrouter-lyria-3-clip-preview-default', 1, 'short_clip', 'output', 'clip', 40, 'CREDIT', 0.04, 'USD', '{"source":"openrouter","duration_seconds":30,"music_generation":true}'),
+  ('price-openrouter-gpt-audio-input', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 1, 'default', 'input', '1k_tokens', 0.0025, 'CREDIT', 0.0025, 'USD', '{"source":"openrouter","audio_input":true}'),
+  ('price-openrouter-gpt-audio-output', 'model-openrouter-gpt-audio', 'profile-openrouter-gpt-audio-default', 2, 'default', 'output', '1k_tokens', 0.01, 'CREDIT', 0.01, 'USD', '{"source":"openrouter","audio_output":true}'),
+  ('price-openrouter-gpt-audio-mini-input', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 1, 'default', 'input', '1k_tokens', 0.0006, 'CREDIT', 0.0006, 'USD', '{"source":"openrouter","audio_input":true}'),
+  ('price-openrouter-gpt-audio-mini-output', 'model-openrouter-gpt-audio-mini', 'profile-openrouter-gpt-audio-mini-default', 2, 'default', 'output', '1k_tokens', 0.0024, 'CREDIT', 0.0024, 'USD', '{"source":"openrouter","audio_output":true}');
 
 INSERT INTO user_wallets (id, project_id, company_id, paid_credits, promotional_credits) VALUES
   ('wallet-demo', 'project-demo', NULL, 10000, 5000),
@@ -284,17 +283,17 @@ INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_
   ('message-acme-training-user', 'conversation-acme-training-video', 'branch-acme-training-main', 'user', 'Draft a short onboarding video for sales enablement training.', NULL, NULL, 0, 0, '{"actor_user_id":"user-corp-producer"}'),
   ('message-acme-training-assistant', 'conversation-acme-training-video', 'branch-acme-training-main', 'assistant', 'Prepared a 12 second training video structure with intro title, workflow demonstration, and a closing action slide.', 'profile-openrouter-grok-imagine-video-default', NULL, 70, 7, '{"provider":"openrouter","actor_user_id":"user-corp-producer"}');
 
-INSERT INTO user_workspace_assets (
-  id, project_id, conversation_id, asset_type, storage_path, storage_provider, bucket_name, object_key, download_url,
+INSERT INTO user_workbench_assets (
+  id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url,
   mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata
 ) VALUES
-  ('asset-demo-text', 'project-demo', 'conversation-demo', 'upload', 's3://model-market-dev-assets/demo-project/uploads/demo.txt', 's3', 'model-market-dev-assets', 'demo-project/uploads/demo.txt', 'https://model-market-dev-assets.s3.amazonaws.com/demo-project/uploads/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
-  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'image', 's3://model-market-dev-assets/project-image-studio/generated/product-hero.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/product-hero.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
-  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'image', 's3://model-market-dev-assets/project-image-studio/generated/avatar-style-board.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/avatar-style-board.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
-  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'storyboard', 's3://model-market-dev-assets/project-video-lab/generated/launch-teaser-storyboard.json', 's3', 'model-market-dev-assets', 'project-video-lab/generated/launch-teaser-storyboard.json', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
-  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'video', 's3://model-market-dev-assets/project-video-lab/generated/social-variants.mp4', 's3', 'model-market-dev-assets', 'project-video-lab/generated/social-variants.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}'),
-  ('asset-acme-campaign-image', 'project-acme-brand', 'conversation-acme-campaign', 'image', 's3://model-market-dev-assets/project-acme-brand/generated/campaign-concept.png', 's3', 'model-market-dev-assets', 'project-acme-brand/generated/campaign-concept.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-brand/generated/campaign-concept.png', 'image/png', 1887436, NULL, 10, 0, '{"actor_user_id":"user-corp-designer","prompt":"corporate brand refresh"}'),
-  ('asset-acme-training-video', 'project-acme-video', 'conversation-acme-training-video', 'video', 's3://model-market-dev-assets/project-acme-video/generated/training-draft.mp4', 's3', 'model-market-dev-assets', 'project-acme-video/generated/training-draft.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-video/generated/training-draft.mp4', 'video/mp4', 8388608, NULL, 70, 7, '{"actor_user_id":"user-corp-producer","duration_seconds":12}');
+  ('asset-demo-text', 'project-demo', 'conversation-demo', 'branch-demo-main', 'text', 'uploaded', 's3://model-market-dev-assets/demo-project/uploads/demo.txt', 's3', 'model-market-dev-assets', 'demo-project/uploads/demo.txt', 'https://model-market-dev-assets.s3.amazonaws.com/demo-project/uploads/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
+  ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'branch-image-product-main', 'image', 'generated', 's3://model-market-dev-assets/project-image-studio/generated/product-hero.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/product-hero.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
+  ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'branch-image-avatar-main', 'image', 'generated', 's3://model-market-dev-assets/project-image-studio/generated/avatar-style-board.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/avatar-style-board.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
+  ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'branch-video-launch-main', 'storyboard', 'generated', 's3://model-market-dev-assets/project-video-lab/generated/launch-teaser-storyboard.json', 's3', 'model-market-dev-assets', 'project-video-lab/generated/launch-teaser-storyboard.json', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
+  ('asset-video-social-variants', 'project-video-lab', 'conversation-video-social', 'branch-video-social-main', 'video', 'generated', 's3://model-market-dev-assets/project-video-lab/generated/social-variants.mp4', 's3', 'model-market-dev-assets', 'project-video-lab/generated/social-variants.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/social-variants.mp4', 'video/mp4', 7340032, NULL, 70, 7, '{"variants":3,"aspect_ratio":"9:16"}'),
+  ('asset-acme-campaign-image', 'project-acme-brand', 'conversation-acme-campaign', 'branch-acme-campaign-main', 'image', 'generated', 's3://model-market-dev-assets/project-acme-brand/generated/campaign-concept.png', 's3', 'model-market-dev-assets', 'project-acme-brand/generated/campaign-concept.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-brand/generated/campaign-concept.png', 'image/png', 1887436, NULL, 10, 0, '{"actor_user_id":"user-corp-designer","prompt":"corporate brand refresh"}'),
+  ('asset-acme-training-video', 'project-acme-video', 'conversation-acme-training-video', 'branch-acme-training-main', 'video', 'generated', 's3://model-market-dev-assets/project-acme-video/generated/training-draft.mp4', 's3', 'model-market-dev-assets', 'project-acme-video/generated/training-draft.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-video/generated/training-draft.mp4', 'video/mp4', 8388608, NULL, 70, 7, '{"actor_user_id":"user-corp-producer","duration_seconds":12}');
 
 INSERT INTO user_message_attachments (id, message_id, asset_id) VALUES
   ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');

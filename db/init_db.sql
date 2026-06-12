@@ -205,33 +205,27 @@ CREATE TABLE IF NOT EXISTS sys_model_configurations (
   CONSTRAINT uq_sys_model_configuration_version UNIQUE (model_profile_id, version)
 );
 
--- System table: platform pricing plans and plan metadata.
-CREATE TABLE IF NOT EXISTS sys_pricing_plans (
-  id VARCHAR(64) PRIMARY KEY,
-  slug VARCHAR(255) NOT NULL UNIQUE,
-  name VARCHAR(255) NOT NULL,
-  status VARCHAR(64) NOT NULL DEFAULT 'active',
-  metadata VARCHAR(4000) NOT NULL DEFAULT '{}'
-);
-
 -- System table: model and profile price rules plus provider cost data.
 CREATE TABLE IF NOT EXISTS sys_price_rules (
   id VARCHAR(64) PRIMARY KEY,
-  model_id VARCHAR(64),
+  model_id VARCHAR(64) NOT NULL,
   model_profile_id VARCHAR(64),
-  input_token_price NUMERIC(18,8) NOT NULL DEFAULT 0,
-  input_token_price_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
-  output_token_price NUMERIC(18,8) NOT NULL DEFAULT 0,
-  output_token_price_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
-  provider_input_token_cost NUMERIC(18,8) NOT NULL DEFAULT 0,
-  provider_input_token_cost_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
-  provider_output_token_cost NUMERIC(18,8) NOT NULL DEFAULT 0,
-  provider_output_token_cost_unit VARCHAR(64) NOT NULL DEFAULT '1k_tokens',
+  price_seq_id INTEGER NOT NULL DEFAULT 1,
+  pricing_variant VARCHAR(128) NOT NULL DEFAULT 'default',
+  price_type VARCHAR(64) NOT NULL,
+  price_unit VARCHAR(64) NOT NULL,
+  price NUMERIC(18,8) NOT NULL DEFAULT 0,
   currency VARCHAR(16) NOT NULL DEFAULT 'CREDIT',
+  provider_price NUMERIC(18,8) NOT NULL DEFAULT 0,
+  provider_currency VARCHAR(16) NOT NULL DEFAULT 'USD',
+  price_metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  status VARCHAR(64) NOT NULL DEFAULT 'active',
   effective_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_price_rules_model FOREIGN KEY (model_id) REFERENCES sys_models(id),
-  CONSTRAINT fk_price_rules_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id)
+  CONSTRAINT fk_price_rules_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id),
+  CONSTRAINT uq_sys_price_rule_seq UNIQUE (model_id, model_profile_id, price_seq_id, effective_at),
+  CONSTRAINT uq_sys_price_rule_variant UNIQUE (model_id, model_profile_id, price_type, price_unit, pricing_variant, currency, effective_at)
 );
 
 -- User table: project credit balances for paid and promotional credits.
@@ -352,12 +346,14 @@ CREATE TABLE IF NOT EXISTS user_messages (
   CONSTRAINT fk_messages_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id)
 );
 
--- User table: uploaded and generated artifacts attached to projects or conversations.
-CREATE TABLE IF NOT EXISTS user_workspace_assets (
+-- User table: uploaded and generated workbench artifacts attached to projects, conversations, and branches.
+CREATE TABLE IF NOT EXISTS user_workbench_assets (
   id VARCHAR(64) PRIMARY KEY,
   project_id VARCHAR(64) NOT NULL,
   conversation_id VARCHAR(64),
+  branch_id VARCHAR(64),
   asset_type VARCHAR(64) NOT NULL,
+  asset_origin VARCHAR(64) NOT NULL DEFAULT 'generated',
   storage_path VARCHAR(1024) NOT NULL,
   storage_provider VARCHAR(64) NOT NULL DEFAULT 's3',
   bucket_name VARCHAR(255),
@@ -370,8 +366,9 @@ CREATE TABLE IF NOT EXISTS user_workspace_assets (
   provider_cost BIGINT NOT NULL DEFAULT 0,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_assets_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
-  CONSTRAINT fk_assets_conversation FOREIGN KEY (conversation_id) REFERENCES user_conversations(id)
+  CONSTRAINT fk_workbench_assets_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT fk_workbench_assets_conversation FOREIGN KEY (conversation_id) REFERENCES user_conversations(id),
+  CONSTRAINT fk_workbench_assets_branch FOREIGN KEY (branch_id) REFERENCES user_conversation_branches(id)
 );
 
 -- User table: links messages to uploaded or generated workspace assets.
@@ -381,7 +378,7 @@ CREATE TABLE IF NOT EXISTS user_message_attachments (
   asset_id VARCHAR(64) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_attachments_message FOREIGN KEY (message_id) REFERENCES user_messages(id),
-  CONSTRAINT fk_attachments_asset FOREIGN KEY (asset_id) REFERENCES user_workspace_assets(id)
+  CONSTRAINT fk_attachments_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id)
 );
 
 -- User table: extracted text and metadata derived from workspace assets.
@@ -391,7 +388,7 @@ CREATE TABLE IF NOT EXISTS user_file_extractions (
   extracted_text TEXT,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_file_extractions_asset FOREIGN KEY (asset_id) REFERENCES user_workspace_assets(id)
+  CONSTRAINT fk_file_extractions_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id)
 );
 
 -- User table: embedding references created from project content.
@@ -549,9 +546,9 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_assets_inference') THEN
-    ALTER TABLE user_workspace_assets
-      ADD CONSTRAINT fk_assets_inference FOREIGN KEY (inference_request_id) REFERENCES user_inference_requests(id);
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_workbench_assets_inference') THEN
+    ALTER TABLE user_workbench_assets
+      ADD CONSTRAINT fk_workbench_assets_inference FOREIGN KEY (inference_request_id) REFERENCES user_inference_requests(id);
   END IF;
 END $$;
 
@@ -561,10 +558,60 @@ ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
 ALTER TABLE user_projects ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
 ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS company_id VARCHAR(64);
 ALTER TABLE user_wallets ALTER COLUMN project_id DROP NOT NULL;
+ALTER TABLE user_workbench_assets ADD COLUMN IF NOT EXISTS asset_origin VARCHAR(64) NOT NULL DEFAULT 'generated';
+ALTER TABLE user_workbench_assets ADD COLUMN IF NOT EXISTS branch_id VARCHAR(64);
 ALTER TABLE user_inference_requests ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS actor_user_id VARCHAR(64);
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_seq_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS pricing_variant VARCHAR(128) NOT NULL DEFAULT 'default';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_type VARCHAR(64) NOT NULL DEFAULT 'output';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_unit VARCHAR(64) NOT NULL DEFAULT 'request';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price NUMERIC(18,8) NOT NULL DEFAULT 0;
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS provider_price NUMERIC(18,8) NOT NULL DEFAULT 0;
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS provider_currency VARCHAR(16) NOT NULL DEFAULT 'USD';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_metadata VARCHAR(4000) NOT NULL DEFAULT '{}';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS status VARCHAR(64) NOT NULL DEFAULT 'active';
+ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE sys_price_rules ALTER COLUMN model_id SET NOT NULL;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS input_token_price;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS input_token_price_unit;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS output_token_price;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS output_token_price_unit;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS provider_input_token_cost;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS provider_input_token_cost_unit;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS provider_output_token_cost;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS provider_output_token_cost_unit;
+ALTER TABLE sys_price_rules DROP COLUMN IF EXISTS metadata;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_attachments_asset') THEN
+    ALTER TABLE user_message_attachments DROP CONSTRAINT fk_attachments_asset;
+  END IF;
+  ALTER TABLE user_message_attachments
+    ADD CONSTRAINT fk_attachments_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id);
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_file_extractions_asset') THEN
+    ALTER TABLE user_file_extractions DROP CONSTRAINT fk_file_extractions_asset;
+  END IF;
+  ALTER TABLE user_file_extractions
+    ADD CONSTRAINT fk_file_extractions_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id);
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_workbench_assets_branch') THEN
+    ALTER TABLE user_workbench_assets
+      ADD CONSTRAINT fk_workbench_assets_branch FOREIGN KEY (branch_id) REFERENCES user_conversation_branches(id);
+  END IF;
+END $$;
 
 DO $$
 BEGIN
@@ -579,6 +626,22 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_wallets_company') THEN
     ALTER TABLE user_wallets
       ADD CONSTRAINT fk_wallets_company FOREIGN KEY (company_id) REFERENCES user_companies(id);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'uq_sys_price_rule_seq') THEN
+    ALTER TABLE sys_price_rules
+      ADD CONSTRAINT uq_sys_price_rule_seq UNIQUE (model_id, model_profile_id, price_seq_id, effective_at);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'uq_sys_price_rule_variant') THEN
+    ALTER TABLE sys_price_rules
+      ADD CONSTRAINT uq_sys_price_rule_variant UNIQUE (model_id, model_profile_id, price_type, price_unit, pricing_variant, currency, effective_at);
   END IF;
 END $$;
 
@@ -612,6 +675,7 @@ CREATE INDEX IF NOT EXISTS idx_user_usage_project_created ON user_usage_events(p
 CREATE INDEX IF NOT EXISTS idx_user_usage_actor_created ON user_usage_events(actor_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_project_created ON user_inference_requests(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_actor_created ON user_inference_requests(actor_user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_user_assets_project_created ON user_workspace_assets(project_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_user_assets_inference ON user_workspace_assets(inference_request_id);
+CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_project_created ON user_workbench_assets(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_branch_created ON user_workbench_assets(branch_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_workbench_assets_inference ON user_workbench_assets(inference_request_id);
 CREATE INDEX IF NOT EXISTS idx_sys_audit_org_created ON sys_audit_logs(organization_id, created_at);

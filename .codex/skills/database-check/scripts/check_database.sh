@@ -89,19 +89,19 @@ select
   p.slug as provider,
   m.slug as model,
   mp.slug as model_profile,
-  pr.input_token_price,
-  pr.input_token_price_unit,
-  pr.output_token_price,
-  pr.output_token_price_unit,
-  pr.provider_input_token_cost,
-  pr.provider_input_token_cost_unit,
-  pr.provider_output_token_cost,
-  pr.provider_output_token_cost_unit,
+  pr.price_seq_id,
+  pr.pricing_variant,
+  pr.price_type,
+  pr.price_unit,
+  pr.price,
   pr.currency,
+  pr.provider_price,
+  pr.provider_currency,
+  pr.price_metadata,
   pr.effective_at
 from sys_price_rules pr
 left join sys_models m on m.id = pr.model_id
 left join sys_providers p on p.id = m.provider_id
 left join sys_model_profiles mp on mp.id = pr.model_profile_id
-order by p.slug, m.slug, mp.slug, pr.effective_at;
+order by p.slug, m.slug, mp.slug, pr.price_seq_id, pr.effective_at;
 SQL

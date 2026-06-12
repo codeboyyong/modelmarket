@@ -30,7 +30,9 @@ type ConversationBranch = {
 type WorkspaceAsset = {
   id: string;
   conversation_id: string;
+  branch_id: string;
   asset_type: string;
+  asset_origin: string;
   storage_path: string;
   storage_provider: string;
   bucket_name: string;
@@ -88,11 +90,16 @@ type PricingRow = {
   modality: string;
   profile: string;
   profile_slug: string;
-  input_price: number;
-  input_price_unit: string;
-  output_price: number;
-  output_price_unit: string;
+  price_seq_id: number;
+  pricing_variant: string;
+  price_type: string;
+  price_unit: string;
+  price: number;
   currency: string;
+  provider_price: number;
+  provider_currency: string;
+  price_metadata: string;
+  status: string;
 };
 
 type CreditRange = "7" | "30" | "90";
@@ -197,7 +204,7 @@ let signupMode = false;
 let changePasswordMode = false;
 let selectedModality = "all";
 let selectedPricingModality = "all";
-let workbenchModality = "image";
+let workbenchModality = "chat";
 let selectedWorkbenchModel = "";
 let workbenchPickerOpen = false;
 let projectPickerOpen = false;
@@ -210,6 +217,14 @@ const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
 const mockModels: Model[] = [
+  {
+    slug: "mock-chat",
+    name: "Mock Chat",
+    provider: "Mock Provider",
+    modality: "chat",
+    profile_slug: "mock-chat-default",
+    profile_name: "Mock Chat Default"
+  },
   {
     slug: "mock-video",
     name: "Mock Video",
@@ -392,8 +407,13 @@ function renderWorkspaceLists() {
       </button>`)
       .join("") || "<div class=\"empty-state\">No conversations yet.</div>";
   $("conversations").classList.toggle("hidden", !conversationPickerOpen);
+  const visibleAssets = assets.filter((asset) => {
+    const matchesConversation = !asset.conversation_id || !currentConversationID || asset.conversation_id === currentConversationID;
+    const matchesBranch = !asset.branch_id || !currentBranchID || asset.branch_id === currentBranchID;
+    return matchesConversation && matchesBranch;
+  });
   $("artifacts").innerHTML =
-    assets
+    visibleAssets
       .map((asset) => `<div class="workspace-row artifact-row">
         <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
@@ -404,15 +424,15 @@ function renderWorkspaceLists() {
 }
 
 function artifactTransferLabel(asset: WorkspaceAsset) {
-  return asset.asset_type === "upload" ? "Uploaded artifact" : "Downloadable artifact";
+  return asset.asset_origin === "uploaded" ? "Uploaded artifact" : "Downloadable artifact";
 }
 
 function artifactTransferClass(asset: WorkspaceAsset) {
-  return asset.asset_type === "upload" ? "uploaded" : "downloaded";
+  return asset.asset_origin === "uploaded" ? "uploaded" : "downloaded";
 }
 
 function artifactTransferIcon(asset: WorkspaceAsset) {
-  return asset.asset_type === "upload" ? "↑" : "↓";
+  return asset.asset_origin === "uploaded" ? "↑" : "↓";
 }
 
 function renderSelectedConversation() {
@@ -439,6 +459,7 @@ async function loadConversationBranches() {
     currentBranchID = "";
   }
   renderBranches();
+  renderWorkspaceLists();
 }
 
 function renderBranches() {
@@ -551,9 +572,9 @@ async function loadModels() {
 }
 
 function renderModelControls() {
-  const usableModels = models.filter((model) => ["image", "audio", "video"].includes(model.modality));
+  const usableModels = models.filter((model) => ["chat", "image", "audio", "video"].includes(model.modality));
   if (!usableModels.some((model) => model.modality === workbenchModality)) {
-    workbenchModality = usableModels[0]?.modality || "image";
+    workbenchModality = usableModels[0]?.modality || "chat";
   }
   if (!selectedWorkbenchModel || !models.some((model) => model.profile_slug === selectedWorkbenchModel || model.slug === selectedWorkbenchModel)) {
     const defaultModel = usableModels.find((model) => model.modality === workbenchModality) || usableModels[0] || models[0];
@@ -725,6 +746,7 @@ function descriptionFor(model: Model) {
   if (model.slug === "x-ai/grok-imagine-video") {
     return "Grok Imagine Video is xAI's fast text-, image-, and reference-conditioned video generation model for short clips across common aspect ratios.";
   }
+  if (model.modality === "chat") return `${model.name} supports text chat through the marketplace routing layer.`;
   if (model.modality === "video") return `${model.name} generates video from prompt and reference inputs through the marketplace routing layer.`;
   if (model.modality === "image") return `${model.name} generates images from text and image prompts through the marketplace routing layer.`;
   if (model.modality === "audio") return `${model.name} supports audio generation or audio-aware workflows through the marketplace routing layer.`;
@@ -732,6 +754,7 @@ function descriptionFor(model: Model) {
 }
 
 function capabilityTags(model: Model) {
+  if (model.modality === "chat") return ["Text chat", "Mock API", "Low latency", "Provider routed"];
   if (model.modality === "video") return ["Text to video", "Image input", "Async job", "Provider routed"];
   if (model.modality === "image") return ["Text to image", "Image input", "Credit metered", "Provider routed"];
   if (model.modality === "audio") return ["Audio output", "Prompt input", "Credit metered", "Provider routed"];
@@ -739,6 +762,7 @@ function capabilityTags(model: Model) {
 }
 
 function priceFor(model: Model): string {
+  if (model.modality === "chat") return "0.002 credits / 1k output";
   if (model.modality === "image") return "10 credits / image";
   if (model.modality === "video") return "60 credits / 10 sec";
   if (model.modality === "audio") return "4 credits / minute";
@@ -823,7 +847,7 @@ function metaRow(label: string, value: string, note: string) {
 function renderPricing() {
   const query = ($("pricingSearch") as HTMLInputElement).value.trim().toLowerCase();
   const visible = pricingRows.filter((row) => {
-    const matchesQuery = [row.provider, row.model, row.model_slug, row.profile].join(" ").toLowerCase().includes(query);
+    const matchesQuery = [row.provider, row.model, row.model_slug, row.profile, row.price_type, row.price_unit, row.pricing_variant, row.price_metadata].join(" ").toLowerCase().includes(query);
     const matchesModality = selectedPricingModality === "all" || row.modality === selectedPricingModality;
     return matchesQuery && matchesModality;
   });
@@ -835,10 +859,11 @@ function renderPricing() {
           <button class="table-link" type="button" data-pricing-model-slug="${escapeHTML(row.model_slug)}">${escapeHTML(row.model)}</button>
           <small>${escapeHTML(row.model_slug)}</small>
         </td>
-        <td>${escapeHTML(formatPrice(row.input_price, row.input_price_unit, row.currency))}</td>
-        <td>${escapeHTML(formatPrice(row.output_price, row.output_price_unit, row.currency))}</td>
+        <td><strong>${escapeHTML(formatPriceType(row.price_type))}</strong><small>#${row.price_seq_id} ${escapeHTML(formatPriceType(row.pricing_variant))}</small></td>
+        <td>${escapeHTML(formatPrice(row.price, row.price_unit, row.currency))}<small>Provider ${escapeHTML(formatPrice(row.provider_price, row.price_unit, row.provider_currency))}</small></td>
+        <td><small>${escapeHTML(formatPriceMetadata(row.price_metadata))}</small></td>
       </tr>`)
-      .join("") || "<tr><td colspan=\"4\">No pricing rows match the current filters.</td></tr>";
+      .join("") || "<tr><td colspan=\"5\">No pricing rows match the current filters.</td></tr>";
 }
 
 async function renderCreditAnalytics() {
@@ -1250,11 +1275,16 @@ async function loadPricing() {
       modality: model.modality,
       profile: model.profile_name,
       profile_slug: model.profile_slug,
-      input_price: 0,
-      input_price_unit: "request",
-      output_price: 0,
-      output_price_unit: "request",
-      currency: "CREDIT"
+      price_seq_id: 1,
+      pricing_variant: "default",
+      price_type: "output",
+      price_unit: "request",
+      price: 0,
+      currency: "CREDIT",
+      provider_price: 0,
+      provider_currency: "USD",
+      price_metadata: "{}",
+      status: "fallback"
     }));
   }
   renderPricing();
@@ -1263,6 +1293,27 @@ async function loadPricing() {
 function formatPrice(value: number, unit: string, currency: string) {
   const amount = Number(value) === 0 ? "0" : Number(value).toLocaleString(undefined, { maximumFractionDigits: 8 });
   return `${amount} ${currency} / ${unit}`;
+}
+
+function formatPriceType(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatPriceMetadata(value: string) {
+  if (!value || value === "{}") return "Default rule";
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return Object.entries(parsed)
+      .slice(0, 3)
+      .map(([key, item]) => `${formatPriceType(key)}: ${typeof item === "object" ? "configured" : String(item)}`)
+      .join(" · ");
+  } catch {
+    return value;
+  }
 }
 
 function showError(error: unknown) {
@@ -1308,7 +1359,7 @@ function openSettings() {
   ($("settingsLanguage") as HTMLSelectElement).value = localStorage.getItem("language") || "en";
   ($("settingsTheme") as HTMLSelectElement).value = localStorage.getItem("themeMode") || "system";
   ($("settingsUsageRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("creditRange") as HTMLSelectElement).value || "30");
-  ($("settingsWorkbenchType") as HTMLSelectElement).value = localStorage.getItem("defaultWorkbenchType") || workbenchModality || "image";
+  ($("settingsWorkbenchType") as HTMLSelectElement).value = localStorage.getItem("defaultWorkbenchType") || workbenchModality || "chat";
   ($("settingsEmailNotifications") as HTMLInputElement).checked = localStorage.getItem("emailNotifications") === "true";
   ($("settingsCompactTables") as HTMLInputElement).checked = localStorage.getItem("compactTables") === "true";
   $("settingsMessage").textContent = "";
@@ -1771,6 +1822,7 @@ $("conversations").addEventListener("click", (event) => {
 });
 $("branchSelect").addEventListener("change", (event) => {
   currentBranchID = (event.target as HTMLSelectElement).value;
+  renderWorkspaceLists();
   loadConversationMessages().catch(showError);
 });
 $("chatTranscript").addEventListener("contextmenu", (event) => {
@@ -1823,7 +1875,7 @@ $("workbenchModelFilter").addEventListener("focus", () => openWorkbenchPicker(tr
 $("workbenchModelFilter").addEventListener("input", () => openWorkbenchPicker(false));
 document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
   button.addEventListener("click", () => {
-    workbenchModality = button.dataset.workbenchModality || "image";
+    workbenchModality = button.dataset.workbenchModality || "chat";
     const next = models.find((model) => model.modality === workbenchModality);
     if (next) selectedWorkbenchModel = next.profile_slug || next.slug;
     openWorkbenchPicker(true);
