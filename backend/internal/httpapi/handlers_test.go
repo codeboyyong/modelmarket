@@ -293,13 +293,19 @@ func TestChatCompletions(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
 	mock.ExpectQuery("select r.id, r.route_group, m.slug").
 		WithArgs("default", "mock-chat").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
-			AddRow("route-mock-chat-primary", "default", "mock-chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", "openai_compatible", "mock://provider/default", "", int64(100), int64(100), int64(42)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "modality", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
+			AddRow("route-mock-chat-primary", "default", "mock-chat", "chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", "openai_compatible", "mock://provider/default", "", int64(100), int64(100), int64(42)))
+	mock.ExpectQuery("select pr.id, pr.pricing_variant").
+		WithArgs("mock-chat", "profile-mock-chat-default").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
 	mock.ExpectExec("insert into user_inference_requests").
 		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_provider_attempts").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-mock", "channel-mock-primary", "route-mock-chat-primary", int64(42), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_usage_events").
+		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "mock-chat", "mock-provider", "chat_completion", 1, sqlmock.AnyArg(), int64(1), int64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))
@@ -363,13 +369,24 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
 	mock.ExpectQuery("select r.id, r.route_group, m.slug").
 		WithArgs("default", "gemini-2-5-flash-free-default").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
-			AddRow("route-gemini-test", "default", "gemini-2.5-flash", "profile-gemini-test", "gemini-test", "provider-google-gemini", "google-gemini", "channel-gemini-free", "Gemini Free Channel", "google_gemini", "https://gemini.test", "TEST_GEMINI_API_KEY", int64(95), int64(100), int64(140)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "modality", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
+			AddRow("route-gemini-test", "default", "gemini-2.5-flash", "chat", "profile-gemini-test", "gemini-test", "provider-google-gemini", "google-gemini", "channel-gemini-free", "Gemini Free Channel", "google_gemini", "https://gemini.test", "TEST_GEMINI_API_KEY", int64(95), int64(100), int64(140)))
+	mock.ExpectQuery("select pr.id, pr.pricing_variant").
+		WithArgs("gemini-2.5-flash", "profile-gemini-test").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).
+			AddRow("price-gemini-input", "free_tier", "input", "1k_tokens", 0.0, 0.0, "{}", true).
+			AddRow("price-gemini-output", "free_tier", "output", "1k_tokens", 0.0, 0.0, "{}", true))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("usd_to_credit_ratio").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
 	mock.ExpectExec("insert into user_inference_requests").
-		WithArgs(sqlmock.AnyArg(), "project-1", "gemini-2.5-flash", "profile-gemini-test", "route-gemini-test", "channel-gemini-free", "google-gemini", 7, 5, int64(1), int64(0), int64(1), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "project-1", "gemini-2.5-flash", "profile-gemini-test", "route-gemini-test", "channel-gemini-free", "google-gemini", 7, 5, int64(0), int64(0), int64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_provider_attempts").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-google-gemini", "channel-gemini-free", "route-gemini-test", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_usage_events").
+		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "gemini-2.5-flash", "google-gemini", "chat_completion", 7, 5, int64(0), int64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"gemini-2-5-flash-free-default","messages":[{"role":"user","content":"hello gemini"}]}`))
@@ -401,6 +418,38 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 	}
 	if body.Usage.PromptTokens != 7 || body.Usage.CompletionTokens != 5 || body.Usage.TotalTokens != 12 {
 		t.Fatalf("unexpected usage: %+v", body.Usage)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCalculateRequestChargeUsesOutputParameters(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	route := selectedModelRoute{
+		ModelSlug:      "x-ai/grok-imagine-video",
+		ModelModality:  "video",
+		ModelProfileID: "profile-video",
+	}
+	mock.ExpectQuery("select pr.id, pr.pricing_variant").
+		WithArgs("x-ai/grok-imagine-video", "profile-video").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).
+			AddRow("price-video-second", "720p", "output", "second_video", 70.0, 0.07, `{"resolution":"720p"}`, true))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("usd_to_credit_ratio").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
+
+	charge, err := app.calculateRequestCharge(context.Background(), route, response{"duration_seconds": float64(5), "resolution": "720p"}, upstreamChatResult{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if charge.CustomerCharge != 350 {
+		t.Fatalf("customer charge = %d, want 350", charge.CustomerCharge)
+	}
+	if charge.ProviderCost != 35 {
+		t.Fatalf("provider cost = %d, want 35", charge.ProviderCost)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

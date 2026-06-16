@@ -1100,6 +1100,12 @@ textarea {
   gap: 10px;
 }
 
+.output-params-summary {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .output-param-field {
   display: grid;
   gap: 6px;

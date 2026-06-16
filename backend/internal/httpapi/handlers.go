@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -1555,17 +1556,21 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	content := upstream.Content
 	requestID := "req_" + randomHex(12)
-	customerCharge := int64(1)
-	providerCost := int64(0)
 	metadata := response{"requested_model": req.Model, "upstream_model_id": route.UpstreamModelID, "route_group": route.RouteGroup}
 	if len(req.Parameters) > 0 {
 		metadata["parameters"] = req.Parameters
 	}
+	charge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, upstream)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	metadata["pricing"] = charge.Metadata
 	metadataRaw, _ := json.Marshal(metadata)
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
 		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
-		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, customerCharge, providerCost, customerCharge-providerCost, string(metadataRaw))
+		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, charge.CustomerCharge-charge.ProviderCost, string(metadataRaw))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1580,10 +1585,14 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConversationID != "" && len(req.Messages) > 0 {
 		last := req.Messages[len(req.Messages)-1]
-		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Content, content, customerCharge, providerCost); err != nil {
+		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Content, content, charge.CustomerCharge, charge.ProviderCost); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
+	}
+	if err := a.recordUsageEvent(r.Context(), projectID, requestID, route, upstream, charge, metadataRaw); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
 	}
 	writeJSON(w, http.StatusOK, response{
 		"id":      requestID,
@@ -1591,8 +1600,176 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		"model":   route.UpstreamModelID,
 		"route":   response{"id": route.ID, "channel_id": route.ChannelID, "channel_name": route.ChannelName, "provider": route.ProviderSlug, "requested_model": req.Model},
 		"choices": []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
-		"usage":   response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens},
+		"usage":   response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens, "customer_charge": charge.CustomerCharge, "provider_cost": charge.ProviderCost},
 	})
+}
+
+type requestCharge struct {
+	CustomerCharge int64
+	ProviderCost   int64
+	Metadata       response
+}
+
+type priceRule struct {
+	ID             string
+	PricingVariant string
+	PriceType      string
+	PriceUnit      string
+	Price          float64
+	ProviderPrice  float64
+	PriceMetadata  string
+	ProfileMatched bool
+}
+
+func (a *App) calculateRequestCharge(ctx context.Context, route selectedModelRoute, parameters response, usage upstreamChatResult) (requestCharge, error) {
+	rules, err := a.priceRulesForRoute(ctx, route)
+	if err != nil {
+		return requestCharge{}, err
+	}
+	if len(rules) == 0 {
+		return requestCharge{CustomerCharge: 1, Metadata: response{"source": "fallback", "reason": "no_price_rule"}}, nil
+	}
+	ratio, err := a.creditRatio(ctx)
+	if err != nil {
+		return requestCharge{}, err
+	}
+	var customerTotal float64
+	var providerTotal float64
+	applied := []response{}
+	for _, rule := range rules {
+		units := billingUnits(rule, parameters, usage)
+		if units <= 0 {
+			continue
+		}
+		customerTotal += rule.Price * units
+		providerTotal += rule.ProviderPrice * ratio * units
+		applied = append(applied, response{
+			"price_rule_id":   rule.ID,
+			"pricing_variant": rule.PricingVariant,
+			"price_type":      rule.PriceType,
+			"price_unit":      rule.PriceUnit,
+			"units":           units,
+			"price":           rule.Price,
+			"provider_price":  rule.ProviderPrice,
+			"profile_matched": rule.ProfileMatched,
+			"price_metadata":  rule.PriceMetadata,
+		})
+	}
+	customerCharge := ceilCredits(customerTotal)
+	providerCost := ceilCredits(providerTotal)
+	return requestCharge{
+		CustomerCharge: customerCharge,
+		ProviderCost:   providerCost,
+		Metadata: response{
+			"source":        "sys_price_rules",
+			"model_slug":    route.ModelSlug,
+			"model_profile": route.ModelProfileID,
+			"modality":      route.ModelModality,
+			"applied_rules": applied,
+		},
+	}, nil
+}
+
+func (a *App) priceRulesForRoute(ctx context.Context, route selectedModelRoute) ([]priceRule, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select pr.id, pr.pricing_variant, pr.price_type, pr.price_unit, pr.price, pr.provider_price, pr.price_metadata,
+			case when coalesce(pr.model_profile_id, '') = $2 and $2 <> '' then true else false end as profile_matched
+		from sys_price_rules pr
+		join sys_models m on m.id = pr.model_id
+		where m.slug = $1
+			and pr.status = 'active'
+			and (coalesce(pr.model_profile_id, '') = $2 or pr.model_profile_id is null)
+		order by profile_matched desc, pr.price_seq_id asc`, route.ModelSlug, route.ModelProfileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	rules := []priceRule{}
+	for rows.Next() {
+		var rule priceRule
+		if err := rows.Scan(&rule.ID, &rule.PricingVariant, &rule.PriceType, &rule.PriceUnit, &rule.Price, &rule.ProviderPrice, &rule.PriceMetadata, &rule.ProfileMatched); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, rows.Err()
+}
+
+func billingUnits(rule priceRule, parameters response, usage upstreamChatResult) float64 {
+	switch rule.PriceUnit {
+	case "1k_tokens":
+		tokens := usage.CompletionTokens
+		if rule.PriceType == "input" {
+			tokens = usage.PromptTokens
+		}
+		return float64(tokens) / 1000
+	case "image":
+		return float64(intParameter(parameters, "output_count", 1))
+	case "second_video":
+		return float64(intParameter(parameters, "duration_seconds", 1))
+	case "second_audio":
+		return float64(intParameter(parameters, "duration_seconds", 1))
+	case "minute_audio":
+		return float64(intParameter(parameters, "duration_seconds", 60)) / 60
+	case "song", "clip", "request":
+		return 1
+	default:
+		return 1
+	}
+}
+
+func intParameter(parameters response, key string, fallback int64) int64 {
+	value, ok := parameters[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed)
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed
+		}
+	case string:
+		parsed, err := strconv.ParseInt(typed, 10, 64)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func ceilCredits(value float64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return int64(math.Ceil(value - 0.000000001))
+}
+
+func (a *App) recordUsageEvent(ctx context.Context, projectID, inferenceRequestID string, route selectedModelRoute, upstream upstreamChatResult, charge requestCharge, metadata []byte) error {
+	_, err := a.DB.ExecContext(ctx, `
+		insert into user_usage_events(id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, input_tokens, output_tokens, customer_charge, provider_cost, metadata)
+		values($1, $2, null, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		"usage_"+randomHex(12), projectID, inferenceRequestID, route.ModelSlug, route.ProviderSlug, usageEventType(route.ModelModality), upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, string(metadata))
+	return err
+}
+
+func usageEventType(modality string) string {
+	switch modality {
+	case "image":
+		return "image_generation"
+	case "video":
+		return "video_generation"
+	case "audio":
+		return "audio_generation"
+	default:
+		return "chat_completion"
+	}
 }
 
 type chatMessage struct {
@@ -1762,6 +1939,7 @@ type selectedModelRoute struct {
 	ID              string
 	RouteGroup      string
 	ModelSlug       string
+	ModelModality   string
 	ModelProfileID  string
 	UpstreamModelID string
 	ProviderID      string
@@ -1778,7 +1956,7 @@ type selectedModelRoute struct {
 
 func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup string) (selectedModelRoute, error) {
 	rows, err := a.DB.QueryContext(ctx, `
-		select r.id, r.route_group, m.slug, coalesce(mp.id, ''), r.upstream_model_id,
+		select r.id, r.route_group, m.slug, m.modality, coalesce(mp.id, ''), r.upstream_model_id,
 			p.id, p.slug, c.id, c.name, c.channel_type, coalesce(c.base_url, ''), coalesce(c.credential_ref, ''),
 			r.priority, r.weight, coalesce(c.response_time_ms, 0)
 		from sys_channel_model_routes r
@@ -1802,7 +1980,7 @@ func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup s
 	var topPriority *int64
 	for rows.Next() {
 		var route selectedModelRoute
-		if err := rows.Scan(&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelProfileID, &route.UpstreamModelID, &route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.ChannelType, &route.BaseURL, &route.CredentialRef, &route.Priority, &route.Weight, &route.ResponseTimeMS); err != nil {
+		if err := rows.Scan(&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelModality, &route.ModelProfileID, &route.UpstreamModelID, &route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.ChannelType, &route.BaseURL, &route.CredentialRef, &route.Priority, &route.Weight, &route.ResponseTimeMS); err != nil {
 			return selectedModelRoute{}, err
 		}
 		if topPriority == nil {

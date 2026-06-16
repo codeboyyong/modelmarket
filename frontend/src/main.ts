@@ -694,6 +694,9 @@ function renderOutputParameterControls() {
   const button = $("outputParamsButton") as HTMLButtonElement;
   button.classList.toggle("hidden", schema.length === 0);
   $("outputParamsPanel").classList.toggle("hidden", !outputParamsOpen || schema.length === 0);
+  const selected = selectedWorkbenchModelRecord();
+  $("outputParamsTitle").textContent = selected ? `${formatPriceType(selected.modality)} output` : "Output parameters";
+  $("outputParamsSummary").textContent = compactParameterSummary(currentOutputParameters()) || "Use the selected profile defaults.";
   $("outputParamsGrid").innerHTML =
     schema
       .map((item) => {
@@ -737,6 +740,66 @@ function updateOutputParameter(target: HTMLInputElement | HTMLSelectElement) {
   }
 }
 
+function parameterDefaults(model: Model) {
+  if (!model.default_parameters) return {};
+  try {
+    return JSON.parse(model.default_parameters) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function parameterSummaryForModel(model: Model) {
+  const defaults = parameterDefaults(model);
+  return compactParameterSummary(defaults);
+}
+
+function compactParameterSummary(values: Record<string, unknown>) {
+  const parts: string[] = [];
+  const resolution = firstValue(values, ["resolution", "size"]);
+  const duration = firstValue(values, ["duration_seconds"]);
+  const aspectRatio = firstValue(values, ["aspect_ratio"]);
+  const quality = firstValue(values, ["quality"]);
+  const voice = firstValue(values, ["voice"]);
+  const format = firstValue(values, ["format"]);
+  const sampleRate = firstValue(values, ["sample_rate"]);
+  if (resolution) parts.push(String(resolution));
+  if (duration) parts.push(`${duration} sec`);
+  if (aspectRatio) parts.push(String(aspectRatio));
+  if (quality) parts.push(formatPriceType(String(quality)));
+  if (voice) parts.push(`Voice ${voice}`);
+  if (format) parts.push(String(format).toUpperCase());
+  if (sampleRate) parts.push(`${sampleRate} Hz`);
+  return parts.slice(0, 4).join(" · ");
+}
+
+function firstValue(values: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = values[key];
+    if (value !== undefined && value !== null && value !== "" && key !== "parameter_schema") return value;
+  }
+  return "";
+}
+
+function renderSupportedParameters(model: Model) {
+  const schema = outputParameterSchema(model);
+  if (schema.length === 0) {
+    return "<p>No editable output parameters are defined for this profile.</p>";
+  }
+  return schema
+    .map((item) => {
+      const options = item.type === "select" && item.options?.length ? `Options: ${item.options.join(", ")}` : item.type === "number" ? numericRangeText(item) : item.type === "boolean" ? "On or off" : "Text value";
+      const defaultValue = item.default === undefined ? "-" : String(item.default);
+      return `<div class="meta-row"><span><strong>${escapeHTML(item.label)}</strong><small>${escapeHTML(options)}</small></span><span>${escapeHTML(defaultValue)}</span></div>`;
+    })
+    .join("");
+}
+
+function numericRangeText(item: OutputParameterSchema) {
+  const range = [item.min !== undefined ? `min ${item.min}` : "", item.max !== undefined ? `max ${item.max}` : "", item.step !== undefined ? `step ${item.step}` : ""].filter(Boolean).join(" · ");
+  return range || "Number";
+}
+
 function renderModels() {
   const query = ($("modelSearch") as HTMLInputElement).value.trim().toLowerCase();
   const visible = models.filter((model) => {
@@ -770,7 +833,7 @@ function renderModels() {
               </div>
               <span class="tag">${escapeHTML(model.modality)}</span>
             </div>
-            <p>${escapeHTML(model.profile_name || "Default profile")} supports marketplace routing and credit metering.</p>
+            <p>${escapeHTML(parameterSummaryForModel(model) || `${model.profile_name || "Default profile"} supports marketplace routing and credit metering.`)}</p>
             <div class="tag-row">
               <span class="tag">${escapeHTML(price)}</span>
               <span class="tag">${model.profile_slug ? "Profile" : "Mock"}</span>
@@ -830,6 +893,10 @@ function renderModelDetail(model: Model) {
       <p>Requests route through ${escapeHTML(model.provider)} metadata. Fallback routing, uptime scoring, and provider comparisons are mocked for this detail page.</p>
       <div class="meta-row"><span><strong>Provider</strong><small>Catalog source</small></span><span>${escapeHTML(model.provider)}</span></div>
       <div class="meta-row"><span><strong>Profile</strong><small>Default configuration</small></span><span>${escapeHTML(model.profile_slug || "default")}</span></div>
+    </article>
+    <article class="detail-panel">
+      <h3>Supported parameters</h3>
+      ${renderSupportedParameters(model)}
     </article>
     <article class="detail-panel detail-api">
       <h3>API</h3>
@@ -1453,13 +1520,22 @@ function formatPriceMetadata(value: string) {
   if (!value || value === "{}") return "Default rule";
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
-    return Object.entries(parsed)
+    const summary = compactParameterSummary(parsed);
+    if (summary) return summary;
+    const labels = Object.entries(parsed)
+      .filter(([key]) => !["source", "pricing"].includes(key))
       .slice(0, 3)
-      .map(([key, item]) => `${formatPriceType(key)}: ${typeof item === "object" ? "configured" : String(item)}`)
-      .join(" · ");
+      .map(([key, item]) => friendlyMetadataLabel(key, item));
+    return labels.join(" · ") || "Default rule";
   } catch {
-    return value;
+    return "Custom rule";
   }
+}
+
+function friendlyMetadataLabel(key: string, value: unknown) {
+  if (typeof value === "boolean") return `${formatPriceType(key)} ${value ? "on" : "off"}`;
+  if (typeof value === "object") return `${formatPriceType(key)} configured`;
+  return `${formatPriceType(key)} ${String(value)}`;
 }
 
 function showError(error: unknown) {
