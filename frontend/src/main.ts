@@ -1598,9 +1598,19 @@ function friendlyMetadataLabel(key: string, value: unknown) {
 }
 
 function showError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = formatWorkbenchError(error);
   $("chatResult").textContent = message;
   appendMessage("assistant", message);
+}
+
+function formatWorkbenchError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes("insufficient_credits")) {
+    const match = raw.match(/required_credits["\s:]+(\d+)/);
+    const required = match ? Number(match[1]).toLocaleString() : "";
+    return required ? `Not enough credits. This request needs ${required} credits.` : "Not enough credits for this request.";
+  }
+  return raw;
 }
 
 function setActiveTab(tab: string) {
@@ -1920,11 +1930,13 @@ function renderAuthUser() {
   if (!user) {
     $("loginButton").textContent = "Login";
     $("loginButton").setAttribute("aria-expanded", "false");
+    $("adminNav").classList.add("hidden");
     $("corporateAdminNav").classList.add("hidden");
     closeAccountMenu();
     return;
   }
   $("loginButton").textContent = user.name || user.email || "Account";
+  $("adminNav").classList.toggle("hidden", !isAdminUser(user));
   $("corporateAdminNav").classList.toggle("hidden", !isCorporateAdmin(user));
   if (isAdminUser(user)) {
     $("adminUserName").textContent = user.name || user.email || "Admin User";
