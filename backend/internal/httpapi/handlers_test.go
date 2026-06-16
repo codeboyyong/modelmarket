@@ -218,8 +218,8 @@ func TestModels(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectQuery("select m.id, m.slug, m.name").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "name", "modality", "status", "coalesce", "coalesce"}).
-			AddRow("model-1", "mock-chat", "Mock Chat", "Mock Provider", "chat", "public", "mock-chat-default", "Mock Chat Default"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "name", "modality", "status", "coalesce", "coalesce", "coalesce"}).
+			AddRow("model-1", "mock-chat", "Mock Chat", "Mock Provider", "chat", "public", "mock-chat-default", "Mock Chat Default", `{"temperature":0.2}`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	rec := httptest.NewRecorder()

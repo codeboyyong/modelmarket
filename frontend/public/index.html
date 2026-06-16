@@ -376,7 +376,15 @@
             <button class="icon-button upload-button" id="uploadAsset" type="button" title="Upload image, audio, or video" aria-label="Upload image, audio, or video">↑</button>
             <input id="assetUploadInput" class="hidden" type="file" accept="image/*,audio/*,video/*" />
             <textarea id="prompt">Explain what this platform does in one sentence.</textarea>
+            <button class="icon-button output-params-button hidden" id="outputParamsButton" type="button" title="Output parameters" aria-label="Output parameters">⚙</button>
             <button id="sendPrompt" type="button">Send</button>
+          </div>
+          <div class="output-params-panel hidden" id="outputParamsPanel" aria-label="Output parameters">
+            <div class="workspace-section-head">
+              <h3>Output parameters</h3>
+              <button class="icon-button" id="closeOutputParams" type="button" aria-label="Close output parameters">×</button>
+            </div>
+            <div class="output-params-grid" id="outputParamsGrid"></div>
           </div>
           <pre id="chatResult" class="hidden">No response yet.</pre>
         </div>

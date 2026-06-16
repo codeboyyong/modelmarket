@@ -73,7 +73,19 @@ type Model = {
   modality: string;
   profile_slug: string;
   profile_name: string;
+  default_parameters?: string;
   status?: string;
+};
+
+type OutputParameterSchema = {
+  key: string;
+  label: string;
+  type: "select" | "number" | "boolean" | "text";
+  default?: string | number | boolean;
+  options?: Array<string | number>;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 
 type APIKey = {
@@ -214,6 +226,8 @@ let currentConversationID = "";
 let currentBranchID = "";
 let branchSourceMessageID = "";
 let promptSending = false;
+let outputParamsOpen = false;
+let outputParameterValues: Record<string, Record<string, string | number | boolean>> = {};
 const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -624,6 +638,7 @@ function renderSelectedWorkbenchModel() {
   ($("modelSelect") as HTMLSelectElement).value = selectedWorkbenchModel;
   const input = $("workbenchModelFilter") as HTMLInputElement;
   if (!workbenchPickerOpen) input.value = selected?.name || "";
+  renderOutputParameterControls();
 }
 
 function openWorkbenchPicker(clearFilter = false) {
@@ -636,6 +651,90 @@ function closeWorkbenchPicker() {
   workbenchPickerOpen = false;
   renderSelectedWorkbenchModel();
   renderWorkbenchModelPicker();
+}
+
+function selectedWorkbenchModelRecord() {
+  return models.find((model) => (model.profile_slug || model.slug) === selectedWorkbenchModel);
+}
+
+function selectedWorkbenchModelKey() {
+  const model = selectedWorkbenchModelRecord();
+  return model ? model.profile_slug || model.slug : selectedWorkbenchModel || "mock-chat";
+}
+
+function outputParameterSchema(model = selectedWorkbenchModelRecord()): OutputParameterSchema[] {
+  if (!model?.default_parameters) return [];
+  try {
+    const parsed = JSON.parse(model.default_parameters) as { parameter_schema?: OutputParameterSchema[] };
+    return Array.isArray(parsed.parameter_schema) ? parsed.parameter_schema.filter((item) => item.key && item.label && item.type) : [];
+  } catch {
+    return [];
+  }
+}
+
+function outputParameterValue(schema: OutputParameterSchema) {
+  const modelKey = selectedWorkbenchModelKey();
+  if (!outputParameterValues[modelKey]) outputParameterValues[modelKey] = {};
+  if (outputParameterValues[modelKey][schema.key] === undefined) {
+    outputParameterValues[modelKey][schema.key] = schema.default ?? (schema.type === "boolean" ? false : "");
+  }
+  return outputParameterValues[modelKey][schema.key];
+}
+
+function currentOutputParameters() {
+  const values: Record<string, string | number | boolean> = {};
+  outputParameterSchema().forEach((schema) => {
+    values[schema.key] = outputParameterValue(schema);
+  });
+  return values;
+}
+
+function renderOutputParameterControls() {
+  const schema = outputParameterSchema();
+  const button = $("outputParamsButton") as HTMLButtonElement;
+  button.classList.toggle("hidden", schema.length === 0);
+  $("outputParamsPanel").classList.toggle("hidden", !outputParamsOpen || schema.length === 0);
+  $("outputParamsGrid").innerHTML =
+    schema
+      .map((item) => {
+        const value = outputParameterValue(item);
+        const label = escapeHTML(item.label);
+        if (item.type === "select") {
+          const options = (item.options || []).map((option) => {
+            const optionValue = String(option);
+            return `<option value="${escapeHTML(optionValue)}"${String(value) === optionValue ? " selected" : ""}>${escapeHTML(optionValue)}</option>`;
+          }).join("");
+          return `<label class="output-param-field">${label}<select data-output-param="${escapeHTML(item.key)}">${options}</select></label>`;
+        }
+        if (item.type === "boolean") {
+          return `<label class="output-param-field toggle-row"><span>${label}</span><input type="checkbox" data-output-param="${escapeHTML(item.key)}"${value === true ? " checked" : ""} /></label>`;
+        }
+        if (item.type === "number") {
+          return `<label class="output-param-field">${label}<input type="number" data-output-param="${escapeHTML(item.key)}" value="${escapeHTML(String(value))}"${item.min !== undefined ? ` min="${item.min}"` : ""}${item.max !== undefined ? ` max="${item.max}"` : ""}${item.step !== undefined ? ` step="${item.step}"` : ""} /></label>`;
+        }
+        return `<label class="output-param-field">${label}<input type="text" data-output-param="${escapeHTML(item.key)}" value="${escapeHTML(String(value))}" /></label>`;
+      })
+      .join("") || "<div class=\"empty-state\">No output parameters for this model.</div>";
+}
+
+function toggleOutputParameters() {
+  outputParamsOpen = !outputParamsOpen;
+  renderOutputParameterControls();
+}
+
+function updateOutputParameter(target: HTMLInputElement | HTMLSelectElement) {
+  const key = target.dataset.outputParam;
+  const schema = outputParameterSchema().find((item) => item.key === key);
+  if (!key || !schema) return;
+  const modelKey = selectedWorkbenchModelKey();
+  if (!outputParameterValues[modelKey]) outputParameterValues[modelKey] = {};
+  if (schema.type === "boolean") {
+    outputParameterValues[modelKey][key] = (target as HTMLInputElement).checked;
+  } else if (schema.type === "number") {
+    outputParameterValues[modelKey][key] = Number(target.value);
+  } else {
+    outputParameterValues[modelKey][key] = target.value;
+  }
 }
 
 function renderModels() {
@@ -796,6 +895,7 @@ async function sendPrompt() {
   if (!currentAPIKey) await createKey();
   if (!currentConversationID) throw new Error("Select or create a conversation first.");
   const model = selectedWorkbenchModel || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
+  const parameters = currentOutputParameters();
   const promptInput = $("prompt") as HTMLTextAreaElement;
   const prompt = promptInput.value.trim();
   if (!prompt) return;
@@ -807,7 +907,7 @@ async function sendPrompt() {
     const data = await request<ChatResponse>("/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${currentAPIKey}` },
-      body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }] })
+      body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }], parameters })
     });
     const answer = data.choices?.[0]?.message?.content || "Response received from backend.";
     replaceWaitingMessage(waitingID, answer);
@@ -1927,6 +2027,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEac
     workbenchModality = button.dataset.workbenchModality || "chat";
     const next = models.find((model) => model.modality === workbenchModality);
     if (next) selectedWorkbenchModel = next.profile_slug || next.slug;
+    outputParamsOpen = false;
+    renderOutputParameterControls();
     openWorkbenchPicker(true);
   });
 });
@@ -1935,6 +2037,20 @@ $("workbenchModelList").addEventListener("click", (event) => {
   if (!button) return;
   selectedWorkbenchModel = button.dataset.workbenchModel || selectedWorkbenchModel;
   closeWorkbenchPicker();
+  renderOutputParameterControls();
+});
+$("outputParamsButton").addEventListener("click", toggleOutputParameters);
+$("closeOutputParams").addEventListener("click", () => {
+  outputParamsOpen = false;
+  renderOutputParameterControls();
+});
+$("outputParamsGrid").addEventListener("input", (event) => {
+  const target = event.target as HTMLInputElement | HTMLSelectElement;
+  if (target.dataset.outputParam) updateOutputParameter(target);
+});
+$("outputParamsGrid").addEventListener("change", (event) => {
+  const target = event.target as HTMLInputElement | HTMLSelectElement;
+  if (target.dataset.outputParam) updateOutputParameter(target);
 });
 document.addEventListener("click", (event) => {
   const target = event.target as Node;

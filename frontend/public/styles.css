@@ -1082,6 +1082,36 @@ textarea {
   opacity: 0.78;
 }
 
+.output-params-button {
+  flex: 0 0 auto;
+}
+
+.output-params-panel {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.output-params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.output-param-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.output-param-field input,
+.output-param-field select {
+  width: 100%;
+}
+
 pre {
   margin: 12px 0 0;
   max-height: 220px;

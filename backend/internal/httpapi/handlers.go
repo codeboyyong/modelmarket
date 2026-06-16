@@ -351,7 +351,7 @@ func authUserResponse(id, email, name, userType, companyID, companyName string) 
 
 func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, '')
+		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, ''), coalesce(mp.default_parameters, '{}')
 		from sys_models m
 		join sys_providers p on p.id = m.provider_id
 		left join sys_model_profiles mp on mp.model_id = m.id and mp.status = 'public'
@@ -363,12 +363,12 @@ func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, slug, name, provider, modality, status, profileSlug, profileName string
-		if err := rows.Scan(&id, &slug, &name, &provider, &modality, &status, &profileSlug, &profileName); err != nil {
+		var id, slug, name, provider, modality, status, profileSlug, profileName, defaultParameters string
+		if err := rows.Scan(&id, &slug, &name, &provider, &modality, &status, &profileSlug, &profileName, &defaultParameters); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "slug": slug, "name": name, "provider": provider, "modality": modality, "status": status, "profile_slug": profileSlug, "profile_name": profileName})
+		items = append(items, response{"id": id, "slug": slug, "name": name, "provider": provider, "modality": modality, "status": status, "profile_slug": profileSlug, "profile_name": profileName, "default_parameters": defaultParameters})
 	}
 	writeJSON(w, http.StatusOK, response{"models": items})
 }
@@ -1537,6 +1537,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		ConversationID string        `json:"conversation_id"`
 		BranchID       string        `json:"branch_id"`
 		Messages       []chatMessage `json:"messages"`
+		Parameters     response      `json:"parameters"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
@@ -1556,10 +1557,15 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	requestID := "req_" + randomHex(12)
 	customerCharge := int64(1)
 	providerCost := int64(0)
+	metadata := response{"requested_model": req.Model, "upstream_model_id": route.UpstreamModelID, "route_group": route.RouteGroup}
+	if len(req.Parameters) > 0 {
+		metadata["parameters"] = req.Parameters
+	}
+	metadataRaw, _ := json.Marshal(metadata)
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
 		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
-		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, customerCharge, providerCost, customerCharge-providerCost, fmt.Sprintf(`{"requested_model":%q,"upstream_model_id":%q,"route_group":%q}`, req.Model, route.UpstreamModelID, route.RouteGroup))
+		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, customerCharge, providerCost, customerCharge-providerCost, string(metadataRaw))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
