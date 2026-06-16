@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -12,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -632,6 +635,7 @@ func parseRangeDays(value string) int {
 func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID        string `json:"user_id"`
+		AmountCents   int64  `json:"amount_cents"`
 		Credits       int64  `json:"credits"`
 		PaymentMethod string `json:"payment_method"`
 	}
@@ -644,8 +648,8 @@ func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 	if req.UserID == "" {
 		req.UserID = "user-yong-zhao"
 	}
-	if req.Credits <= 0 {
-		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_credit_amount"})
+	if req.AmountCents <= 0 && req.Credits <= 0 {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_payment_amount"})
 		return
 	}
 	userID, err := a.resolveUsageUserID(r.Context(), req.UserID)
@@ -656,12 +660,53 @@ func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 	if req.PaymentMethod == "" {
 		req.PaymentMethod = "credit_card"
 	}
-	ratio, err := a.creditRatio(r.Context())
+	ctx := r.Context()
+	ratio, err := a.creditRatio(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	amountCents := int64(float64(req.Credits) / ratio * 100)
+	amountCents := req.AmountCents
+	if amountCents <= 0 {
+		amountCents = int64(float64(req.Credits) / ratio * 100)
+	}
+	credits := int64(float64(amountCents) / 100 * ratio)
+	if credits <= 0 {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_credit_amount"})
+		return
+	}
+	paymentModeFallback := strings.TrimSpace(os.Getenv("PAYMENT_PROVIDER_MODE"))
+	if paymentModeFallback == "" {
+		paymentModeFallback = "mock"
+	}
+	paymentMode, err := a.configValue(r.Context(), "payment_provider_mode", paymentModeFallback)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	paymentMode = strings.ToLower(paymentMode)
+	if paymentMode == "stripe" {
+		result, err := a.createStripeCreditPurchase(ctx, userID, req.PaymentMethod, amountCents, credits, ratio)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, response{"error": "stripe_checkout_failed", "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+		return
+	}
+	mockEnabled, err := a.configBool(r.Context(), "payment_mock_enabled", true)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if paymentMode != "mock" {
+		writeJSON(w, http.StatusNotImplemented, response{"error": "payment_provider_not_configured", "payment_provider_mode": paymentMode})
+		return
+	}
+	if !mockEnabled {
+		writeJSON(w, http.StatusServiceUnavailable, response{"error": "mock_payments_disabled"})
+		return
+	}
 	walletID, err := a.walletForUser(r.Context(), userID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -677,10 +722,10 @@ func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 	paymentID := "payment_" + randomHex(8)
 	ledgerID := "ledger_" + randomHex(8)
 	providerPaymentID := "fake_" + randomHex(8)
-	metadata := fmt.Sprintf(`{"fake":true,"payment_method":%q,"usd_to_credit_ratio":%g}`, req.PaymentMethod, ratio)
+	metadata := fmt.Sprintf(`{"fake":true,"payment_provider_mode":%q,"payment_method":%q,"usd_to_credit_ratio":%g}`, paymentMode, req.PaymentMethod, ratio)
 	if _, err := tx.ExecContext(r.Context(), `
 		insert into user_credit_purchases(id, user_id, credits, amount_cents, currency, status, metadata)
-		values($1, $2, $3, $4, 'USD', 'posted', $5)`, purchaseID, userID, req.Credits, amountCents, metadata); err != nil {
+		values($1, $2, $3, $4, 'USD', 'posted', $5)`, purchaseID, userID, credits, amountCents, metadata); err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
@@ -692,14 +737,14 @@ func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := tx.ExecContext(r.Context(), `
 		insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata)
-		values($1, $2, 'purchase', $3, 'paid', 'posted', 'fake credit purchase', $4, $5)`, ledgerID, walletID, req.Credits, purchaseID, metadata); err != nil {
+		values($1, $2, 'purchase', $3, 'paid', 'posted', 'mock credit purchase', $4, $5)`, ledgerID, walletID, credits, purchaseID, metadata); err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
 	if _, err := tx.ExecContext(r.Context(), `
 		update user_wallets
 		set paid_credits = paid_credits + $1, updated_at = current_timestamp
-		where id = $2`, req.Credits, walletID); err != nil {
+		where id = $2`, credits, walletID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
@@ -707,12 +752,265 @@ func (a *App) purchaseCredits(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, response{"purchase_id": purchaseID, "wallet_id": walletID, "credits": req.Credits, "amount_cents": amountCents, "currency": "USD", "status": "posted"})
+	writeJSON(w, http.StatusCreated, response{"purchase_id": purchaseID, "wallet_id": walletID, "credits": credits, "amount_cents": amountCents, "currency": "USD", "payment_provider_mode": paymentMode, "provider_payment_id": providerPaymentID, "status": "posted"})
+}
+
+type stripeCheckoutSession struct {
+	ID            string `json:"id"`
+	URL           string `json:"url"`
+	PaymentStatus string `json:"payment_status"`
+}
+
+func (a *App) createStripeCreditPurchase(ctx context.Context, userID, paymentMethod string, amountCents, credits int64, ratio float64) (response, error) {
+	secretKey := strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY"))
+	if secretKey == "" {
+		return nil, errors.New("STRIPE_SECRET_KEY is not set")
+	}
+	walletID, err := a.walletForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	purchaseID := "purchase_" + randomHex(8)
+	paymentID := "payment_" + randomHex(8)
+	metadata := fmt.Sprintf(`{"fake":false,"payment_provider_mode":"stripe","payment_method":%q,"usd_to_credit_ratio":%g}`, paymentMethod, ratio)
+	session, err := a.createStripeCheckoutSession(ctx, secretKey, purchaseID, walletID, userID, amountCents, credits)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		insert into user_credit_purchases(id, user_id, credits, amount_cents, currency, status, metadata)
+		values($1, $2, $3, $4, 'USD', 'pending', $5)`, purchaseID, userID, credits, amountCents, metadata); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		insert into user_payments(id, wallet_id, provider, provider_payment_id, amount_cents, currency, status, metadata)
+		values($1, $2, 'stripe', $3, $4, 'USD', 'pending', $5)`, paymentID, walletID, session.ID, amountCents, metadata); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return response{
+		"purchase_id":           purchaseID,
+		"wallet_id":             walletID,
+		"credits":               credits,
+		"amount_cents":          amountCents,
+		"currency":              "USD",
+		"payment_provider_mode": "stripe",
+		"provider_payment_id":   session.ID,
+		"checkout_url":          session.URL,
+		"status":                "pending",
+	}, nil
+}
+
+func (a *App) createStripeCheckoutSession(ctx context.Context, secretKey, purchaseID, walletID, userID string, amountCents, credits int64) (stripeCheckoutSession, error) {
+	publicURL := strings.TrimRight(a.Config.PublicURL, "/")
+	if publicURL == "" {
+		publicURL = "http://localhost:3000"
+	}
+	form := url.Values{}
+	form.Set("mode", "payment")
+	form.Set("success_url", publicURL+"/#credit-usage")
+	form.Set("cancel_url", publicURL+"/#pricing")
+	form.Set("client_reference_id", purchaseID)
+	form.Set("line_items[0][quantity]", "1")
+	form.Set("line_items[0][price_data][currency]", "usd")
+	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(amountCents, 10))
+	form.Set("line_items[0][price_data][product_data][name]", "Model Market credits")
+	form.Set("line_items[0][price_data][product_data][description]", fmt.Sprintf("%d credits", credits))
+	form.Set("metadata[purchase_id]", purchaseID)
+	form.Set("metadata[wallet_id]", walletID)
+	form.Set("metadata[user_id]", userID)
+	form.Set("metadata[credits]", strconv.FormatInt(credits, 10))
+	form.Set("metadata[amount_cents]", strconv.FormatInt(amountCents, 10))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.stripe.com/v1/checkout/sessions", strings.NewReader(form.Encode()))
+	if err != nil {
+		return stripeCheckoutSession{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secretKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := a.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return stripeCheckoutSession{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return stripeCheckoutSession{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return stripeCheckoutSession{}, fmt.Errorf("stripe status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var session stripeCheckoutSession
+	if err := json.Unmarshal(body, &session); err != nil {
+		return stripeCheckoutSession{}, err
+	}
+	if session.ID == "" || session.URL == "" {
+		return stripeCheckoutSession{}, errors.New("stripe checkout session missing id or url")
+	}
+	return session, nil
+}
+
+func (a *App) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	if secret == "" {
+		writeJSON(w, http.StatusServiceUnavailable, response{"error": "STRIPE_WEBHOOK_SECRET is not set"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_body"})
+		return
+	}
+	if !validStripeSignature(body, r.Header.Get("Stripe-Signature"), secret, 5*time.Minute) {
+		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_signature"})
+		return
+	}
+	var event struct {
+		ID   string          `json:"id"`
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	if event.Type != "checkout.session.completed" {
+		writeJSON(w, http.StatusOK, response{"status": "ignored", "event_type": event.Type})
+		return
+	}
+	var data struct {
+		Object struct {
+			ID            string            `json:"id"`
+			PaymentStatus string            `json:"payment_status"`
+			PaymentIntent string            `json:"payment_intent"`
+			Metadata      map[string]string `json:"metadata"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_session"})
+		return
+	}
+	if data.Object.PaymentStatus != "" && data.Object.PaymentStatus != "paid" {
+		writeJSON(w, http.StatusOK, response{"status": "ignored", "payment_status": data.Object.PaymentStatus})
+		return
+	}
+	result, err := a.postStripeCreditPurchase(r.Context(), data.Object.ID, data.Object.PaymentIntent, data.Object.Metadata)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func validStripeSignature(payload []byte, header, secret string, tolerance time.Duration) bool {
+	parts := strings.Split(header, ",")
+	var timestamp string
+	signatures := []string{}
+	for _, part := range parts {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "t":
+			timestamp = value
+		case "v1":
+			signatures = append(signatures, value)
+		}
+	}
+	if timestamp == "" || len(signatures) == 0 {
+		return false
+	}
+	unix, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	if tolerance > 0 && time.Since(time.Unix(unix, 0)) > tolerance {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	for _, signature := range signatures {
+		if hmac.Equal([]byte(expected), []byte(signature)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) postStripeCreditPurchase(ctx context.Context, sessionID, paymentIntent string, metadata map[string]string) (response, error) {
+	purchaseID := metadata["purchase_id"]
+	walletID := metadata["wallet_id"]
+	credits, _ := strconv.ParseInt(metadata["credits"], 10, 64)
+	if purchaseID == "" || walletID == "" || credits <= 0 || sessionID == "" {
+		return nil, errors.New("stripe webhook missing purchase metadata")
+	}
+	idempotencyKey := "stripe_checkout_" + sessionID
+	var existing string
+	if err := a.DB.QueryRowContext(ctx, `select id from user_ledger_transactions where idempotency_key = $1`, idempotencyKey).Scan(&existing); err == nil {
+		return response{"status": "already_posted", "ledger_id": existing, "purchase_id": purchaseID}, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	ledgerID := "ledger_" + randomHex(8)
+	providerID := sessionID
+	if paymentIntent != "" {
+		providerID = paymentIntent
+	}
+	eventMetadata := fmt.Sprintf(`{"payment_provider_mode":"stripe","checkout_session_id":%q,"payment_intent":%q}`, sessionID, paymentIntent)
+	if _, err := tx.ExecContext(ctx, `
+		update user_credit_purchases
+		set status = 'posted', metadata = $2
+		where id = $1`, purchaseID, eventMetadata); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		update user_payments
+		set status = 'succeeded', provider_payment_id = $2, metadata = $3
+		where provider = 'stripe' and provider_payment_id = $1`, sessionID, providerID, eventMetadata); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata)
+		values($1, $2, 'purchase', $3, 'paid', 'posted', 'stripe credit purchase', $4, $5)`, ledgerID, walletID, credits, idempotencyKey, eventMetadata); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		update user_wallets
+		set paid_credits = paid_credits + $1, updated_at = current_timestamp
+		where id = $2`, credits, walletID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return response{"status": "posted", "ledger_id": ledgerID, "purchase_id": purchaseID, "credits": credits}, nil
 }
 
 func (a *App) creditRatio(ctx context.Context) (float64, error) {
-	var raw string
-	if err := a.DB.QueryRowContext(ctx, `select conf_value from sys_config where conf_key = 'usd_to_credit_ratio'`).Scan(&raw); err != nil {
+	raw, err := a.configValue(ctx, "usd_to_credit_ratio", "1")
+	if err != nil {
 		return 1, err
 	}
 	var ratio float64
@@ -720,6 +1018,35 @@ func (a *App) creditRatio(ctx context.Context) (float64, error) {
 		return 1, nil
 	}
 	return ratio, nil
+}
+
+func (a *App) configValue(ctx context.Context, key, fallback string) (string, error) {
+	var raw string
+	if err := a.DB.QueryRowContext(ctx, `select conf_value from sys_config where conf_key = $1`, key).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fallback, nil
+		}
+		return fallback, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	return strings.TrimSpace(raw), nil
+}
+
+func (a *App) configBool(ctx context.Context, key string, fallback bool) (bool, error) {
+	raw, err := a.configValue(ctx, key, fmt.Sprintf("%t", fallback))
+	if err != nil {
+		return fallback, err
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes", "y", "on":
+		return true, nil
+	case "false", "0", "no", "n", "off":
+		return false, nil
+	default:
+		return fallback, nil
+	}
 }
 
 func (a *App) walletForUser(ctx context.Context, userID string) (string, error) {

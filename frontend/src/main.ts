@@ -192,6 +192,7 @@ type CompanyUsageResponse = {
 };
 
 const apiBase = (window as Window & { API_BASE_URL?: string }).API_BASE_URL || "http://localhost:8080";
+const buyCreditRatio = 100;
 let currentProjectID = "";
 let currentAPIKey = "";
 let models: Model[] = [];
@@ -1492,8 +1493,9 @@ function updatePaymentFields() {
 }
 
 function updateBuyCreditEstimate() {
-  const credits = Math.max(0, Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
-  $("buyCreditUsd").textContent = `$${credits.toFixed(2)}`;
+  const usd = Math.max(0, Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
+  const credits = Math.round(usd * buyCreditRatio);
+  $("buyCreditUsd").textContent = `${credits.toLocaleString()} credits`;
 }
 
 async function submitBuyCredit(event: SubmitEvent) {
@@ -1503,22 +1505,24 @@ async function submitBuyCredit(event: SubmitEvent) {
     openLogin();
     return;
   }
-  const credits = Math.round(Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
-  if (credits <= 0) {
-    setBuyCreditMessage("Enter a credit amount greater than 0.", true);
+  const usd = Number(($("buyCreditAmount") as HTMLInputElement).value || 0);
+  const amountCents = Math.round(usd * 100);
+  if (amountCents <= 0) {
+    setBuyCreditMessage("Enter a USD amount greater than 0.", true);
     return;
   }
-  if (selectedPaymentMethod() === "credit_card" && !($("cardNumber") as HTMLInputElement).value.trim()) {
-    setBuyCreditMessage("Enter a credit card number.", true);
-    return;
-  }
-  setBuyCreditMessage("Processing fake payment...");
+  setBuyCreditMessage("Creating payment session...");
   try {
-    const result = await request<{ credits: number; amount_cents: number; status: string }>("/api/v1/credits/purchase", {
+    const result = await request<{ credits: number; amount_cents: number; status: string; checkout_url?: string; payment_provider_mode?: string }>("/api/v1/credits/purchase", {
       method: "POST",
-      body: JSON.stringify({ user_id: user.id, credits, payment_method: selectedPaymentMethod() })
+      body: JSON.stringify({ user_id: user.id, amount_cents: amountCents, payment_method: selectedPaymentMethod() })
     });
-    setBuyCreditMessage(`Added ${result.credits.toLocaleString()} credits.`);
+    if (result.checkout_url) {
+      setBuyCreditMessage("Redirecting to Stripe checkout...");
+      window.location.href = result.checkout_url;
+      return;
+    }
+    setBuyCreditMessage(`Added ${result.credits.toLocaleString()} credits for $${(result.amount_cents / 100).toFixed(2)}.`);
     await loadProjects();
     await renderCreditAnalytics();
     await renderUserCreditUsage();

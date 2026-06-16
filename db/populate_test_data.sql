@@ -45,9 +45,10 @@
 -- DELETE FROM sys_roles;
 
 INSERT INTO sys_config (conf_key, conf_value, description) VALUES
-  ('usd_to_credit_ratio', '1', 'Number of paid credits granted per 1 USD for fake local purchases'),
+  ('usd_to_credit_ratio', '100', 'Number of paid credits granted per 1 USD for purchases'),
+  ('payment_provider_mode', 'mock', 'Payment provider mode. mock is implemented for local/dev purchases'),
+  ('payment_mock_enabled', 'true', 'Allows local/demo purchases to succeed without a real payment provider'),
   ('default_currency', 'USD', 'Default billing currency for local/demo purchases'),
-  ('fake_payments_enabled', 'true', 'Allows local/demo purchases to succeed without a real payment provider'),
   ('model_catalog_cache_ttl_seconds', '300', 'Cache lifetime for model catalog responses'),
   ('pricing_cache_ttl_seconds', '300', 'Cache lifetime for pricing responses'),
   ('user_session_ttl_hours', '24', 'Default login session lifetime'),

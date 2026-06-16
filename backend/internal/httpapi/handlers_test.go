@@ -3,13 +3,18 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -402,6 +407,174 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 	}
 }
 
+func TestPurchaseCreditsUsesConfiguredUSDToCreditRatio(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select id").
+		WithArgs("user-yong-zhao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-yong-zhao"))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("usd_to_credit_ratio").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("payment_provider_mode").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("mock"))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("payment_mock_enabled").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("true"))
+	mock.ExpectQuery("select w.id").
+		WithArgs("user-yong-zhao").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("select w.id").
+		WithArgs("user-yong-zhao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("wallet-demo"))
+	mock.ExpectBegin()
+	mock.ExpectExec("insert into user_credit_purchases").
+		WithArgs(sqlmock.AnyArg(), "user-yong-zhao", int64(10000), int64(10000), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_payments").
+		WithArgs(sqlmock.AnyArg(), "wallet-demo", "credit_card", sqlmock.AnyArg(), int64(10000), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").
+		WithArgs(sqlmock.AnyArg(), "wallet-demo", int64(10000), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_wallets").
+		WithArgs(int64(10000), "wallet-demo").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/credits/purchase", bytes.NewBufferString(`{"user_id":"user-yong-zhao","amount_cents":10000,"payment_method":"credit_card"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "credits", float64(10000))
+	assertJSONField(t, rec.Body.Bytes(), "amount_cents", float64(10000))
+	assertJSONField(t, rec.Body.Bytes(), "payment_provider_mode", "mock")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPurchaseCreditsStripeModeCreatesCheckoutSession(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	t.Setenv("STRIPE_SECRET_KEY", "sk_test_local")
+	app.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.String() != "https://api.stripe.com/v1/checkout/sessions" {
+			t.Fatalf("unexpected stripe request: %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk_test_local" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		form, err := url.ParseQuery(string(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if form.Get("line_items[0][price_data][unit_amount]") != "2500" {
+			t.Fatalf("unexpected stripe amount form: %s", string(raw))
+		}
+		if form.Get("metadata[credits]") != "2500" {
+			t.Fatalf("unexpected stripe credits form: %s", string(raw))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"cs_test_123","url":"https://checkout.stripe.test/session","payment_status":"unpaid"}`)),
+			Request:    r,
+		}, nil
+	})}
+
+	mock.ExpectQuery("select id").
+		WithArgs("user-yong-zhao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-yong-zhao"))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("usd_to_credit_ratio").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("payment_provider_mode").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("stripe"))
+	mock.ExpectQuery("select w.id").
+		WithArgs("user-yong-zhao").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("select w.id").
+		WithArgs("user-yong-zhao").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("wallet-demo"))
+	mock.ExpectBegin()
+	mock.ExpectExec("insert into user_credit_purchases").
+		WithArgs(sqlmock.AnyArg(), "user-yong-zhao", int64(2500), int64(2500), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_payments").
+		WithArgs(sqlmock.AnyArg(), "wallet-demo", "cs_test_123", int64(2500), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/credits/purchase", bytes.NewBufferString(`{"user_id":"user-yong-zhao","amount_cents":2500,"payment_method":"credit_card"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "credits", float64(2500))
+	assertJSONField(t, rec.Body.Bytes(), "amount_cents", float64(2500))
+	assertJSONField(t, rec.Body.Bytes(), "payment_provider_mode", "stripe")
+	assertJSONField(t, rec.Body.Bytes(), "checkout_url", "https://checkout.stripe.test/session")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStripeWebhookPostsCredits(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_local")
+
+	payload := []byte(`{"id":"evt_123","type":"checkout.session.completed","data":{"object":{"id":"cs_test_123","payment_status":"paid","payment_intent":"pi_123","metadata":{"purchase_id":"purchase_123","wallet_id":"wallet-demo","user_id":"user-yong-zhao","credits":"2500","amount_cents":"2500"}}}}`)
+	mock.ExpectQuery("select id from user_ledger_transactions").
+		WithArgs("stripe_checkout_cs_test_123").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectBegin()
+	mock.ExpectExec("update user_credit_purchases").
+		WithArgs("purchase_123", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_payments").
+		WithArgs("cs_test_123", "pi_123", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").
+		WithArgs(sqlmock.AnyArg(), "wallet-demo", int64(2500), "stripe_checkout_cs_test_123", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_wallets").
+		WithArgs(int64(2500), "wallet-demo").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/stripe/webhook", bytes.NewReader(payload))
+	req.Header.Set("Stripe-Signature", stripeTestSignature(payload, "whsec_local"))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "status", "posted")
+	assertJSONField(t, rec.Body.Bytes(), "purchase_id", "purchase_123")
+	assertJSONField(t, rec.Body.Bytes(), "credits", float64(2500))
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAPIKeys(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
@@ -423,6 +596,15 @@ func TestAPIKeys(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func stripeTestSignature(payload []byte, secret string) string {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(payload)
+	return "t=" + timestamp + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func assertJSONField(t *testing.T, raw []byte, key string, expected any) {

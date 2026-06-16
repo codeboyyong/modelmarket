@@ -94,7 +94,7 @@ Copy the example environment file if you want to run services manually:
 cp .env.example .env
 ```
 
-Phase 1 uses mocked provider data and does not require real provider, OAuth, or payment credentials.
+Phase 1 uses mocked provider data and can run with mocked payment credentials. Payment mode is configurable; see [docs/payments.md](docs/payments.md).
 
 Environment-specific database files live in:
 

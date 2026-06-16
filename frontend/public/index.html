@@ -198,13 +198,13 @@
           </div>
           <form class="auth-form" id="buyCreditForm">
             <label>
-              Credits
+              USD amount
               <input id="buyCreditAmount" type="number" min="1" step="1" value="100" />
             </label>
             <div class="credit-cost-row">
-              <span>USD total</span>
-              <strong id="buyCreditUsd">$100.00</strong>
-              <small>1 USD = 1 credit</small>
+              <span>Credits added</span>
+              <strong id="buyCreditUsd">10,000 credits</strong>
+              <small>1 USD = 100 credits</small>
             </div>
             <fieldset class="account-type-field">
               <legend>Payment method</legend>
@@ -222,19 +222,10 @@
               </label>
             </fieldset>
             <div id="creditCardFields" class="card-fields">
-              <label>
-                Card number
-                <input id="cardNumber" type="text" inputmode="numeric" autocomplete="cc-number" placeholder="4242 4242 4242 4242" />
-              </label>
-              <div class="two-column-fields">
-                <label>
-                  Expiry
-                  <input id="cardExpiry" type="text" autocomplete="cc-exp" placeholder="12/30" />
-                </label>
-                <label>
-                  CVC
-                  <input id="cardCvc" type="text" inputmode="numeric" autocomplete="cc-csc" placeholder="123" />
-                </label>
+              <div class="credit-cost-row">
+                <span>Payment details</span>
+                <strong>Provider checkout</strong>
+                <small>Card details are handled by the configured payment provider.</small>
               </div>
             </div>
             <button id="submitBuyCredit" type="submit">Buy credit</button>
