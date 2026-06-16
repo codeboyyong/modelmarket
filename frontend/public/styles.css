@@ -1518,6 +1518,16 @@ table.pricing-table {
   margin-bottom: 4px;
 }
 
+.admin-dashboard-grid {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.admin-dashboard-grid h3 {
+  margin: 0 0 10px;
+}
+
 code {
   color: var(--accent-2);
 }

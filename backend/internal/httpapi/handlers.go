@@ -506,6 +506,137 @@ func (a *App) companyUsageModels(ctx context.Context, companyID string) ([]respo
 	return items, rows.Err()
 }
 
+func (a *App) adminOverview(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		writeJSON(w, http.StatusUnauthorized, response{"error": "admin_user_required"})
+		return
+	}
+	var userType string
+	if err := a.DB.QueryRowContext(r.Context(), `select user_type from sys_users where id = $1`, userID).Scan(&userType); err != nil || userType != "sys_admin" {
+		writeJSON(w, http.StatusForbidden, response{"error": "sys_admin_required"})
+		return
+	}
+	configs, err := a.adminConfigs(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	routes, err := a.adminRoutes(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	balances, err := a.adminProjectBalances(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	inferences, err := a.adminRecentInferences(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"configs": configs, "routes": routes, "balances": balances, "recent_inferences": inferences})
+}
+
+func (a *App) adminConfigs(ctx context.Context) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `select conf_key, conf_value, coalesce(description, '') from sys_config order by conf_key asc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var key, value, description string
+		if err := rows.Scan(&key, &value, &description); err != nil {
+			return nil, err
+		}
+		items = append(items, response{"key": key, "value": value, "description": description})
+	}
+	return items, rows.Err()
+}
+
+func (a *App) adminRoutes(ctx context.Context) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select r.id, m.name, m.modality, p.name, c.name, r.status, r.priority, r.weight
+		from sys_channel_model_routes r
+		join sys_models m on m.id = r.model_id
+		join sys_provider_channels c on c.id = r.channel_id
+		join sys_providers p on p.id = c.provider_id
+		order by r.priority desc, p.name, m.name
+		limit 20`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, model, modality, provider, channel, status string
+		var priority, weight int64
+		if err := rows.Scan(&id, &model, &modality, &provider, &channel, &status, &priority, &weight); err != nil {
+			return nil, err
+		}
+		items = append(items, response{"id": id, "model": model, "modality": modality, "provider": provider, "channel": channel, "status": status, "priority": priority, "weight": weight})
+	}
+	return items, rows.Err()
+}
+
+func (a *App) adminProjectBalances(ctx context.Context) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select p.id, p.name, coalesce(w.paid_credits + w.promotional_credits, 0), coalesce(u.credits_used, 0)
+		from user_projects p
+		left join user_wallets w on w.project_id = p.id
+			or (p.company_id is not null and w.company_id = p.company_id and w.project_id is null)
+		left join (
+			select project_id, sum(customer_charge) as credits_used
+			from user_usage_events
+			group by project_id
+		) u on u.project_id = p.id
+		order by p.created_at asc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, name string
+		var walletCredits, used int64
+		if err := rows.Scan(&id, &name, &walletCredits, &used); err != nil {
+			return nil, err
+		}
+		available := walletCredits - used
+		if available < 0 {
+			available = 0
+		}
+		items = append(items, response{"id": id, "name": name, "wallet_credits": walletCredits, "credits_used": used, "available_credits": available})
+	}
+	return items, rows.Err()
+}
+
+func (a *App) adminRecentInferences(ctx context.Context) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select id, model_slug, provider_slug, status, customer_charge, provider_cost, created_at
+		from user_inference_requests
+		order by created_at desc
+		limit 20`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var id, model, provider, status string
+		var charge, cost int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &model, &provider, &status, &charge, &cost, &createdAt); err != nil {
+			return nil, err
+		}
+		items = append(items, response{"id": id, "model": model, "provider": provider, "status": status, "customer_charge": charge, "provider_cost": cost, "created_at": createdAt})
+	}
+	return items, rows.Err()
+}
+
 func (a *App) userCreditUsage(w http.ResponseWriter, r *http.Request) {
 	rangeDays := parseRangeDays(r.URL.Query().Get("range"))
 	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
@@ -1072,6 +1203,55 @@ func (a *App) walletForUser(ctx context.Context, userID string) (string, error) 
 	return walletID, err
 }
 
+func (a *App) enforceProjectBalance(ctx context.Context, projectID string, requiredCredits int64) error {
+	if requiredCredits <= 0 {
+		return nil
+	}
+	available, err := a.projectAvailableCredits(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if available < requiredCredits {
+		return fmt.Errorf("available %d credits, required %d credits", available, requiredCredits)
+	}
+	return nil
+}
+
+func (a *App) projectAvailableCredits(ctx context.Context, projectID string) (int64, error) {
+	var walletCredits, usageCredits int64
+	err := a.DB.QueryRowContext(ctx, `
+		with selected_project as (
+			select id, company_id
+			from user_projects
+			where id = $1
+		),
+		wallet_total as (
+			select coalesce(sum(w.paid_credits + w.promotional_credits), 0) as credits
+			from selected_project sp
+			join user_wallets w on
+				(sp.company_id is not null and w.company_id = sp.company_id and w.project_id is null)
+				or (sp.company_id is null and w.project_id = sp.id)
+		),
+		usage_total as (
+			select coalesce(sum(ue.customer_charge), 0) as credits
+			from selected_project sp
+			join user_projects p on
+				(sp.company_id is not null and p.company_id = sp.company_id)
+				or (sp.company_id is null and p.id = sp.id)
+			left join user_usage_events ue on ue.project_id = p.id
+		)
+		select wallet_total.credits, usage_total.credits
+		from wallet_total, usage_total`, projectID).Scan(&walletCredits, &usageCredits)
+	if err != nil {
+		return 0, err
+	}
+	available := walletCredits - usageCredits
+	if available < 0 {
+		return 0, nil
+	}
+	return available, nil
+}
+
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
@@ -1549,6 +1729,15 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
 		return
 	}
+	estimatedCharge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, upstreamChatResult{PromptTokens: len(req.Messages)})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if err := a.enforceProjectBalance(r.Context(), projectID, estimatedCharge.CustomerCharge); err != nil {
+		writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": estimatedCharge.CustomerCharge})
+		return
+	}
 	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{"error": "upstream_failed", "provider": route.ProviderSlug, "channel_id": route.ChannelID, "message": err.Error()})
@@ -1564,6 +1753,12 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
+	}
+	if charge.CustomerCharge > estimatedCharge.CustomerCharge {
+		if err := a.enforceProjectBalance(r.Context(), projectID, charge.CustomerCharge); err != nil {
+			writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": charge.CustomerCharge})
+			return
+		}
 	}
 	metadata["pricing"] = charge.Metadata
 	metadataRaw, _ := json.Marshal(metadata)

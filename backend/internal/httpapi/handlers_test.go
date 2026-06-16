@@ -298,6 +298,12 @@ func TestChatCompletions(t *testing.T) {
 	mock.ExpectQuery("select pr.id, pr.pricing_variant").
 		WithArgs("mock-chat", "profile-mock-chat-default").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
+	mock.ExpectQuery("with selected_project").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits", "credits"}).AddRow(int64(100), int64(0)))
+	mock.ExpectQuery("select pr.id, pr.pricing_variant").
+		WithArgs("mock-chat", "profile-mock-chat-default").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
 	mock.ExpectExec("insert into user_inference_requests").
 		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -371,6 +377,14 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 		WithArgs("default", "gemini-2-5-flash-free-default").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "modality", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
 			AddRow("route-gemini-test", "default", "gemini-2.5-flash", "chat", "profile-gemini-test", "gemini-test", "provider-google-gemini", "google-gemini", "channel-gemini-free", "Gemini Free Channel", "google_gemini", "https://gemini.test", "TEST_GEMINI_API_KEY", int64(95), int64(100), int64(140)))
+	mock.ExpectQuery("select pr.id, pr.pricing_variant").
+		WithArgs("gemini-2.5-flash", "profile-gemini-test").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).
+			AddRow("price-gemini-input", "free_tier", "input", "1k_tokens", 0.0, 0.0, "{}", true).
+			AddRow("price-gemini-output", "free_tier", "output", "1k_tokens", 0.0, 0.0, "{}", true))
+	mock.ExpectQuery("select conf_value from sys_config").
+		WithArgs("usd_to_credit_ratio").
+		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
 	mock.ExpectQuery("select pr.id, pr.pricing_variant").
 		WithArgs("gemini-2.5-flash", "profile-gemini-test").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).

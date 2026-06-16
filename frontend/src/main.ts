@@ -203,6 +203,13 @@ type CompanyUsageResponse = {
   models: CompanyUsageModel[];
 };
 
+type AdminOverviewResponse = {
+  configs: Array<{ key: string; value: string; description: string }>;
+  balances: Array<{ id: string; name: string; wallet_credits: number; credits_used: number; available_credits: number }>;
+  routes: Array<{ id: string; model: string; modality: string; provider: string; channel: string; status: string; priority: number; weight: number }>;
+  recent_inferences: Array<{ id: string; model: string; provider: string; status: string; customer_charge: number; provider_cost: number; created_at: string }>;
+};
+
 const apiBase = (window as Window & { API_BASE_URL?: string }).API_BASE_URL || "http://localhost:8080";
 const buyCreditRatio = 100;
 let currentProjectID = "";
@@ -1057,6 +1064,58 @@ function metaRow(label: string, value: string, note: string) {
   return `<div class="meta-row"><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(note)}</small></span><span>${escapeHTML(value)}</span></div>`;
 }
 
+async function loadAdminOverview() {
+  const user = getStoredUser();
+  if (!user || !isAdminUser(user)) {
+    $("adminConfigRows").innerHTML = "<div class=\"meta-row\"><span><strong>Admin required</strong><small>Log in as a system admin.</small></span><span>-</span></div>";
+    return;
+  }
+  try {
+    const data = await request<AdminOverviewResponse>(`/api/v1/admin/overview?user_id=${encodeURIComponent(user.id)}`);
+    renderAdminOverview(data);
+  } catch (error) {
+    const message = escapeHTML(error instanceof Error ? error.message : String(error));
+    $("adminConfigRows").innerHTML = `<div class="meta-row"><span><strong>Load failed</strong><small>${message}</small></span><span>-</span></div>`;
+  }
+}
+
+function renderAdminOverview(data: AdminOverviewResponse) {
+  $("adminConfigRows").innerHTML =
+    data.configs
+      .filter((item) => ["payment_provider_mode", "payment_mock_enabled", "usd_to_credit_ratio", "s3_bucket_name", "low_credit_warning_threshold"].includes(item.key))
+      .map((item) => metaRow(formatPriceType(item.key), item.value, item.description))
+      .join("") || "<div class=\"empty-state\">No config rows found.</div>";
+  $("adminBalanceRows").innerHTML =
+    data.balances
+      .map((row) => `<tr>
+        <td><strong>${escapeHTML(row.name)}</strong><small>${escapeHTML(row.id)}</small></td>
+        <td>${Number(row.wallet_credits || 0).toLocaleString()}</td>
+        <td>${Number(row.credits_used || 0).toLocaleString()}</td>
+        <td><strong>${Number(row.available_credits || 0).toLocaleString()}</strong></td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No project balances found.</td></tr>";
+  $("adminRouteRows").innerHTML =
+    data.routes
+      .slice(0, 12)
+      .map((row) => `<tr>
+        <td><strong>${escapeHTML(row.model)}</strong><small>${escapeHTML(formatPriceType(row.modality))}</small></td>
+        <td>${escapeHTML(row.provider)}</td>
+        <td>${escapeHTML(row.channel)}</td>
+        <td><span class="tag">${escapeHTML(row.status)}</span></td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No routes found.</td></tr>";
+  $("adminInferenceRows").innerHTML =
+    data.recent_inferences
+      .slice(0, 12)
+      .map((row) => `<tr>
+        <td><strong>${escapeHTML(row.id)}</strong><small>${escapeHTML(new Date(row.created_at).toLocaleString())}</small></td>
+        <td>${escapeHTML(row.model)}<small>${escapeHTML(row.provider)}</small></td>
+        <td>${escapeHTML(row.status)}</td>
+        <td><strong>${Number(row.customer_charge || 0).toLocaleString()}</strong><small>Cost ${Number(row.provider_cost || 0).toLocaleString()}</small></td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"4\">No inference requests yet.</td></tr>";
+}
+
 function renderPricing() {
   const query = ($("pricingSearch") as HTMLInputElement).value.trim().toLowerCase();
   const visible = pricingRows.filter((row) => {
@@ -1559,6 +1618,9 @@ function setActiveTab(tab: string) {
     const user = getStoredUser();
     if (user) void loadCorporateUsage(user);
   }
+  if (nextTab === "admin") {
+    void loadAdminOverview();
+  }
   if (nextTab === "credit-usage") {
     renderUserCreditUsage();
   }
@@ -1866,6 +1928,7 @@ function renderAuthUser() {
   $("corporateAdminNav").classList.toggle("hidden", !isCorporateAdmin(user));
   if (isAdminUser(user)) {
     $("adminUserName").textContent = user.name || user.email || "Admin User";
+    void loadAdminOverview();
   }
   if (isCorporateAdmin(user)) {
     void loadCorporateUsage(user);
