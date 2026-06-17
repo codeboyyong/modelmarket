@@ -11,7 +11,9 @@ The current implementation is a local developer scaffold:
 - repo-owned SQL dev test data
 - Docker Compose stack
 - basic API key flow
-- mock chat completion endpoint
+- mock chat/media completion endpoint
+- mock payment with configurable credit ratio
+- local mock S3 storage for uploaded and generated workbench assets
 - admin/metadata/workbench UI shell
 
 The product direction is documented in:
@@ -20,6 +22,7 @@ The product direction is documented in:
 - [system_design.md](system_design.md)
 - [implementation_plan.md](implementation_plan.md)
 - [docs/demo-accounts.md](docs/demo-accounts.md)
+- [docs/local-e2e-demo.md](docs/local-e2e-demo.md)
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
@@ -80,6 +83,14 @@ scripts/init_db.sh dev
 scripts/populate_test_data.sh dev
 ```
 
+Run the local E2E smoke after the backend, frontend, and database are up:
+
+```sh
+scripts/demo-smoke.sh dev
+```
+
+The smoke creates a mock payment purchase, creates a project API key, generates a mock image artifact, downloads it through the local mock S3 endpoint, and verifies the database row.
+
 Redis is optional in Phase 1. The default Docker Compose stack runs with PostgreSQL only. To start Redis as well for future cache/rate-limit experiments:
 
 ```sh
@@ -95,6 +106,15 @@ cp .env.example .env
 ```
 
 Phase 1 uses mocked provider data and can run with mocked payment credentials. Payment mode is configurable; see [docs/payments.md](docs/payments.md).
+
+For local/demo media assets, set:
+
+```sh
+OBJECT_STORAGE_DIR=tmp/storage
+MM_ASSET_PUBLIC_URL=http://localhost:8080/api/v1/mock-s3
+```
+
+Generated image/video/audio requests create rows in `user_workbench_assets`. Image requests write SVG mock assets; video/audio requests write JSON mock manifests. Upload intents return a `PUT` URL under `/api/v1/mock-s3/...`, and the frontend uploads the selected file bytes there.
 
 Environment-specific database files live in:
 

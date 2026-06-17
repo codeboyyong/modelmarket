@@ -1250,6 +1250,15 @@ pre {
   color: var(--warning);
 }
 
+.artifact-preview {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
 .artifact-link {
   overflow-wrap: anywhere;
   color: var(--accent-2);

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1637,6 +1638,44 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) mockS3Object(w http.ResponseWriter, r *http.Request) {
+	objectKey := strings.TrimPrefix(r.URL.Path, "/api/v1/mock-s3/")
+	localPath, err := a.objectStoragePath(objectKey)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_object_key"})
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		file, err := os.Create(localPath)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		size, copyErr := io.Copy(file, r.Body)
+		closeErr := file.Close()
+		if copyErr != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": copyErr.Error()})
+			return
+		}
+		if closeErr != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": closeErr.Error()})
+			return
+		}
+		w.Header().Set("ETag", fmt.Sprintf("%q", hashAPIKey(objectKey + strconv.FormatInt(size, 10))[:16]))
+		writeJSON(w, http.StatusOK, response{"status": "stored", "object_key": objectKey, "size_bytes": size})
+	case http.MethodGet:
+		http.ServeFile(w, r, localPath)
+	default:
+		w.Header().Set("Allow", "GET, PUT, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, response{"error": "method_not_allowed"})
+	}
+}
+
 func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
 	rows, err := a.DB.QueryContext(r.Context(), `
@@ -1789,13 +1828,26 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	artifacts := []response{}
+	if isGeneratedAssetModality(route.ModelModality) {
+		prompt := ""
+		if len(req.Messages) > 0 {
+			prompt = req.Messages[len(req.Messages)-1].Content
+		}
+		artifacts, err = a.createMockGeneratedArtifacts(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, route, req.Parameters, prompt, charge)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, response{
-		"id":      requestID,
-		"object":  "chat.completion",
-		"model":   route.UpstreamModelID,
-		"route":   response{"id": route.ID, "channel_id": route.ChannelID, "channel_name": route.ChannelName, "provider": route.ProviderSlug, "requested_model": req.Model},
-		"choices": []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
-		"usage":   response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens, "customer_charge": charge.CustomerCharge, "provider_cost": charge.ProviderCost},
+		"id":        requestID,
+		"object":    "chat.completion",
+		"model":     route.UpstreamModelID,
+		"route":     response{"id": route.ID, "channel_id": route.ChannelID, "channel_name": route.ChannelName, "provider": route.ProviderSlug, "requested_model": req.Model},
+		"choices":   []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
+		"usage":     response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens, "customer_charge": charge.CustomerCharge, "provider_cost": charge.ProviderCost},
+		"artifacts": artifacts,
 	})
 }
 
@@ -1965,6 +2017,159 @@ func usageEventType(modality string) string {
 	default:
 		return "chat_completion"
 	}
+}
+
+func isGeneratedAssetModality(modality string) bool {
+	return modality == "image" || modality == "video" || modality == "audio"
+}
+
+func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID string, route selectedModelRoute, parameters response, prompt string, charge requestCharge) ([]response, error) {
+	if conversationID != "" && branchID == "" {
+		resolved, err := a.defaultBranchID(ctx, conversationID)
+		if err != nil {
+			return nil, err
+		}
+		branchID = resolved
+	}
+	count := intParameter(parameters, "output_count", 1)
+	if route.ModelModality != "image" || count < 1 {
+		count = 1
+	}
+	if count > 4 {
+		count = 4
+	}
+	artifacts := make([]response, 0, count)
+	for i := int64(0); i < count; i++ {
+		assetID := "asset_" + randomHex(12)
+		ext, mimeType := generatedAssetFormat(route.ModelModality, parameters)
+		filename := generatedAssetFilename(route.ModelModality, i+1, count, ext)
+		bucket := a.Config.AssetBucket
+		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, filename}, "/"), "/")
+		storagePath := "s3://" + bucket + "/" + objectKey
+		downloadURL := assetDownloadURL(a.Config.AssetPublicURL, bucket, objectKey)
+		content := mockGeneratedAssetContent(route, parameters, prompt, assetID, i+1, count)
+		if route.ModelModality == "image" {
+			content = mockGeneratedImageSVG(route, parameters, prompt, assetID)
+		}
+		sizeBytes, err := a.writeMockS3Object(objectKey, []byte(content))
+		if err != nil {
+			return nil, err
+		}
+		assetCharge := splitCredits(charge.CustomerCharge, count, i)
+		assetCost := splitCredits(charge.ProviderCost, count, i)
+		metadataRaw, _ := json.Marshal(response{
+			"mock":                 true,
+			"prompt":               prompt,
+			"parameters":           parameters,
+			"model_slug":           route.ModelSlug,
+			"model_profile_id":     route.ModelProfileID,
+			"upstream_model_id":    route.UpstreamModelID,
+			"inference_request_id": inferenceRequestID,
+			"asset_index":          i + 1,
+			"asset_count":          count,
+		})
+		_, err = a.DB.ExecContext(ctx, `
+			insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata)
+			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, 's3', $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			assetID, projectID, conversationID, branchID, route.ModelModality, storagePath, bucket, objectKey, downloadURL, mimeType, sizeBytes, inferenceRequestID, assetCharge, assetCost, truncateString(string(metadataRaw), 3900))
+		if err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, response{
+			"id": assetID, "project_id": projectID, "conversation_id": conversationID, "branch_id": branchID,
+			"asset_type": route.ModelModality, "asset_origin": "generated",
+			"storage_path": storagePath, "storage_provider": "s3", "bucket_name": bucket, "object_key": objectKey,
+			"download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes,
+			"inference_request_id": inferenceRequestID, "customer_charge": assetCharge, "provider_cost": assetCost,
+		})
+	}
+	return artifacts, nil
+}
+
+func (a *App) defaultBranchID(ctx context.Context, conversationID string) (string, error) {
+	var branchID string
+	err := a.DB.QueryRowContext(ctx, `
+		select id
+		from user_conversation_branches
+		where conversation_id = $1
+		order by created_at asc, id asc
+		limit 1`, conversationID).Scan(&branchID)
+	return branchID, err
+}
+
+func generatedAssetFormat(modality string, parameters response) (string, string) {
+	switch modality {
+	case "image":
+		return "svg", "image/svg+xml"
+	case "audio":
+		format := strings.ToLower(strings.TrimSpace(fmt.Sprint(parameters["format"])))
+		if format == "wav" {
+			return "json", "application/json"
+		}
+		return "json", "application/json"
+	case "video":
+		return "json", "application/json"
+	default:
+		return "json", "application/json"
+	}
+}
+
+func generatedAssetFilename(modality string, index, count int64, ext string) string {
+	suffix := ""
+	if count > 1 {
+		suffix = "-" + strconv.FormatInt(index, 10)
+	}
+	return modality + "-mock" + suffix + "." + ext
+}
+
+func mockGeneratedAssetContent(route selectedModelRoute, parameters response, prompt, assetID string, index, count int64) string {
+	body, _ := json.MarshalIndent(response{
+		"asset_id":          assetID,
+		"mock":              true,
+		"asset_type":        route.ModelModality,
+		"model_slug":        route.ModelSlug,
+		"upstream_model_id": route.UpstreamModelID,
+		"prompt":            prompt,
+		"parameters":        parameters,
+		"asset_index":       index,
+		"asset_count":       count,
+		"note":              "Local demo artifact. Replace this mock generator with a provider adapter for production media bytes.",
+	}, "", "  ")
+	return string(body) + "\n"
+}
+
+func mockGeneratedImageSVG(route selectedModelRoute, parameters response, prompt, assetID string) string {
+	title := truncateString(prompt, 90)
+	if title == "" {
+		title = "Mock generated image"
+	}
+	size := truncateString(fmt.Sprint(parameters["size"]), 40)
+	if size == "<nil>" || size == "" {
+		size = "1024x1024"
+	}
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#f7fafc"/>
+  <rect x="80" y="96" width="864" height="832" rx="28" fill="#ffffff" stroke="#1f2937" stroke-width="4"/>
+  <rect x="128" y="152" width="768" height="500" rx="20" fill="#dbeafe"/>
+  <circle cx="276" cy="294" r="72" fill="#f59e0b"/>
+  <path d="M152 604 L404 380 L548 520 L672 430 L872 604 Z" fill="#10b981"/>
+  <text x="128" y="735" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#111827">%s</text>
+  <text x="128" y="790" font-family="Arial, sans-serif" font-size="24" fill="#374151">Model: %s</text>
+  <text x="128" y="832" font-family="Arial, sans-serif" font-size="22" fill="#4b5563">Size: %s</text>
+  <text x="128" y="874" font-family="Arial, sans-serif" font-size="18" fill="#6b7280">Asset: %s</text>
+</svg>
+`, xmlEscape(title), xmlEscape(route.UpstreamModelID), xmlEscape(size), xmlEscape(assetID))
+}
+
+func splitCredits(total, count, index int64) int64 {
+	if count <= 1 {
+		return total
+	}
+	base := total / count
+	if index == 0 {
+		return base + total%count
+	}
+	return base
 }
 
 type chatMessage struct {
@@ -2317,11 +2522,63 @@ func sanitizeFilename(filename string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+func (a *App) writeMockS3Object(objectKey string, content []byte) (int64, error) {
+	localPath, err := a.objectStoragePath(objectKey)
+	if err != nil {
+		return 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(localPath, content, 0o644); err != nil {
+		return 0, err
+	}
+	return int64(len(content)), nil
+}
+
+func (a *App) objectStoragePath(objectKey string) (string, error) {
+	objectKey = strings.Trim(strings.ReplaceAll(objectKey, "\\", "/"), "/")
+	cleanKey := filepath.Clean(objectKey)
+	if objectKey == "" || cleanKey == "." || strings.HasPrefix(cleanKey, "../") || cleanKey == ".." || filepath.IsAbs(cleanKey) {
+		return "", errors.New("invalid object key")
+	}
+	root, err := filepath.Abs(a.Config.ObjectStorageDir)
+	if err != nil {
+		return "", err
+	}
+	localPath := filepath.Join(root, cleanKey)
+	absLocalPath, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", err
+	}
+	if absLocalPath != root && !strings.HasPrefix(absLocalPath, root+string(os.PathSeparator)) {
+		return "", errors.New("object key escapes storage root")
+	}
+	return absLocalPath, nil
+}
+
 func assetDownloadURL(publicBaseURL, bucket, objectKey string) string {
 	if publicBaseURL != "" {
 		return publicBaseURL + "/" + objectKey
 	}
 	return "https://" + bucket + ".s3.amazonaws.com/" + objectKey
+}
+
+func truncateString(value string, maxLen int) string {
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
+}
+
+func xmlEscape(value string) string {
+	return strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	).Replace(value)
 }
 
 func randomHex(bytesLen int) string {

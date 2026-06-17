@@ -47,6 +47,8 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/messages", a.messages)
 	mux.HandleFunc("GET /api/v1/assets", a.assets)
 	mux.HandleFunc("POST /api/v1/assets/upload-intent", a.createUploadIntent)
+	mux.HandleFunc("GET /api/v1/mock-s3/", a.mockS3Object)
+	mux.HandleFunc("PUT /api/v1/mock-s3/", a.mockS3Object)
 	mux.HandleFunc("GET /api/v1/api-keys", a.apiKeys)
 	mux.HandleFunc("POST /api/v1/api-keys", a.createAPIKey)
 	mux.HandleFunc("DELETE /api/v1/api-keys/", a.revokeAPIKey)
@@ -58,7 +60,7 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

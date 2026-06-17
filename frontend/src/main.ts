@@ -157,6 +157,7 @@ type ChatResponse = {
   id?: string;
   model?: string;
   choices?: Array<{ message?: { content?: string } }>;
+  artifacts?: WorkspaceAsset[];
 };
 
 type AuthResponse = {
@@ -279,6 +280,12 @@ function escapeHTML(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function assetHref(asset: WorkspaceAsset): string {
+  const url = asset.download_url || asset.storage_path || "";
+  if (url.startsWith("/")) return `${apiBase}${url}`;
+  return url;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -437,11 +444,18 @@ function renderWorkspaceLists() {
   });
   $("artifacts").innerHTML =
     visibleAssets
-      .map((asset) => `<div class="workspace-row artifact-row">
+      .map((asset) => {
+        const href = assetHref(asset);
+        const preview = asset.asset_type === "image" && href
+          ? `<img class="artifact-preview" src="${escapeHTML(href)}" alt="${escapeHTML(asset.asset_type)} artifact preview">`
+          : "";
+        return `<div class="workspace-row artifact-row">
         <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
-        <a class="artifact-link" href="${escapeHTML(asset.download_url || asset.storage_path)}" target="_blank" rel="noreferrer">${escapeHTML(asset.download_url || asset.storage_path)}</a>
-      </div>`)
+        ${preview}
+        <a class="artifact-link" href="${escapeHTML(href)}" target="_blank" rel="noreferrer">${escapeHTML(href || asset.storage_path)}</a>
+      </div>`;
+      })
       .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
   renderSelectedConversation();
 }
@@ -984,7 +998,10 @@ async function sendPrompt() {
       body: JSON.stringify({ model, conversation_id: currentConversationID, branch_id: currentBranchID, messages: [{ role: "user", content: prompt }], parameters })
     });
     const answer = data.choices?.[0]?.message?.content || "Response received from backend.";
-    replaceWaitingMessage(waitingID, answer);
+    const artifactNote = data.artifacts?.length
+      ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. See Artifacts for the mock S3 download URL.`
+      : "";
+    replaceWaitingMessage(waitingID, `${answer}${artifactNote}`);
     await loadSummary();
     await loadWorkspace();
   } catch (error) {
@@ -1009,8 +1026,16 @@ async function uploadAssetFile(file: File) {
       size_bytes: file.size
     })
   });
+  const uploadURL = data.upload.url.startsWith("/") ? `${apiBase}${data.upload.url}` : data.upload.url;
+  const uploadResponse = await fetch(uploadURL, {
+    method: data.upload.method || "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`${uploadResponse.status} ${await uploadResponse.text()}`);
+  }
   appendMessage("user", `Uploaded ${file.name}`);
-  void data;
   await loadWorkspace();
 }
 
