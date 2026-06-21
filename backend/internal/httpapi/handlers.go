@@ -109,20 +109,10 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	email, storedHash, err := a.lookupLoginIdentity(r.Context(), req.Username)
 	if err != nil {
-		if a.Config.DevMode {
-			email := req.Username
-			name := strings.Split(req.Username, "@")[0]
-			if !strings.Contains(email, "@") {
-				email = "admin@example.com"
-				name = req.Username
-			}
-			writeJSON(w, http.StatusOK, devAuthResponse(email, name))
-			return
-		}
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
-	if storedHash != "" && storedHash != hashPassword(req.Password) {
+	if storedHash == "" || storedHash != hashPassword(req.Password) {
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}

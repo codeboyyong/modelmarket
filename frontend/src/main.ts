@@ -1944,6 +1944,7 @@ function renderAuthMode() {
   $("companyNameField").classList.toggle("hidden", !signupMode || selectedSignupAccountType() !== "corporate");
   $("confirmPasswordField").classList.toggle("hidden", !signupMode && !changePasswordMode);
   document.querySelector<HTMLElement>(".social-login")?.classList.toggle("hidden", changePasswordMode);
+  document.querySelector<HTMLElement>(".social-divider")?.classList.toggle("hidden", changePasswordMode);
   ($("authUsername") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "off" : "username";
   ($("authPassword") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "new-password" : "current-password";
   ($("authConfirmPassword") as HTMLInputElement).autocomplete = "new-password";
@@ -2010,16 +2011,23 @@ async function submitAuth(event: SubmitEvent) {
   }
 }
 
-async function socialLogin(provider: string) {
-  setAuthMessage(`Logging in with ${provider}...`);
+async function socialLogin(provider: string, selectedButton: HTMLButtonElement) {
+  const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
+  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".social-button"));
+  buttons.forEach((button) => { button.disabled = true; });
+  selectedButton.classList.add("loading");
+  setAuthMessage(`Connecting to ${providerName}...`);
   try {
     const auth = await request<AuthResponse>("/api/v1/auth/social/dev", {
       method: "POST",
       body: JSON.stringify({ provider })
     });
-    completeAuth(auth, `Logged in with ${provider}`);
+    completeAuth(auth, `Logged in with ${providerName}`);
   } catch (error) {
     setAuthMessage(formatAuthError(error), true);
+  } finally {
+    buttons.forEach((button) => { button.disabled = false; });
+    selectedButton.classList.remove("loading");
   }
 }
 
@@ -2233,7 +2241,7 @@ document.querySelectorAll<HTMLInputElement>("input[name='accountType']").forEach
   input.addEventListener("change", updateSignupCompanyField);
 });
 document.querySelectorAll<HTMLButtonElement>(".social-button").forEach((button) => {
-  button.addEventListener("click", () => socialLogin(button.dataset.provider || ""));
+  button.addEventListener("click", () => socialLogin(button.dataset.provider || "", button));
 });
 $("createProject").addEventListener("click", () => createProject().catch(showError));
 $("createConversation").addEventListener("click", () => createConversation().catch(showError));

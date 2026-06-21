@@ -49,6 +49,7 @@ scripts/populate_test_data.sh dev
 ```
 
 `scripts/init_db.sh dev` drops and recreates the development schema. Do not run it when you need to preserve current local data.
+It also resets every seeded account password to `dev-password`, including passwords changed through the UI.
 
 ## 3. Start the Backend
 

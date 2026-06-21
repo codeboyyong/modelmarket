@@ -161,6 +161,72 @@ func TestPasswordLogin(t *testing.T) {
 	}
 }
 
+func TestPasswordLoginRejectsWrongPassword(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select email, coalesce").
+		WithArgs("admin@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"email", "coalesce"}).AddRow("admin@example.com", hashPassword("dev-password")))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin@example.com","password":"wrong-password"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "error", "invalid_credentials")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPasswordLoginRejectsUnknownUserInDevMode(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select email, coalesce").
+		WithArgs("missing@example.com").
+		WillReturnError(sql.ErrNoRows)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"missing@example.com","password":"anything"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "error", "invalid_credentials")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPasswordLoginRejectsAccountWithoutPassword(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+
+	mock.ExpectQuery("select email, coalesce").
+		WithArgs("social@example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"email", "coalesce"}).AddRow("social@example.com", ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"social@example.com","password":"anything"}`))
+	rec := httptest.NewRecorder()
+
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "error", "invalid_credentials")
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDevSocialLogin(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
