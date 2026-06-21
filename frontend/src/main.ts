@@ -282,6 +282,123 @@ function escapeHTML(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+function renderMessageContent(role: "user" | "assistant", content: string): string {
+  return role === "assistant" ? renderMarkdown(content) : escapeHTML(content);
+}
+
+function renderMarkdown(markdown: string): string {
+  const lines = markdown.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  const output: string[] = [];
+  let paragraph: string[] = [];
+  let listType: "ol" | "ul" | "" = "";
+  let codeFence = false;
+  let codeLanguage = "";
+  let codeLines: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    output.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const closeList = () => {
+    if (!listType) return;
+    output.push(`</${listType}>`);
+    listType = "";
+  };
+  const flushCode = () => {
+    const languageClass = codeLanguage ? ` class="language-${codeLanguage}"` : "";
+    output.push(`<pre><code${languageClass}>${escapeHTML(codeLines.join("\n"))}</code></pre>`);
+    codeLines = [];
+    codeLanguage = "";
+  };
+
+  for (const line of lines) {
+    const fence = line.match(/^\s*```([a-zA-Z0-9_-]*)\s*$/);
+    if (fence) {
+      if (codeFence) flushCode();
+      else {
+        flushParagraph();
+        closeList();
+        codeLanguage = fence[1].toLowerCase();
+      }
+      codeFence = !codeFence;
+      continue;
+    }
+    if (codeFence) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const level = heading[1].length;
+      output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    if (/^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(line)) {
+      flushParagraph();
+      closeList();
+      output.push("<hr>");
+      continue;
+    }
+
+    const unorderedItem = line.match(/^\s*[-+*]\s+(.+)$/);
+    const orderedItem = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    const item = unorderedItem || orderedItem;
+    if (item) {
+      flushParagraph();
+      const nextListType = unorderedItem ? "ul" : "ol";
+      if (listType !== nextListType) {
+        closeList();
+        listType = nextListType;
+        output.push(`<${listType}>`);
+      }
+      output.push(`<li>${renderInlineMarkdown(item[1])}</li>`);
+      continue;
+    }
+
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      flushParagraph();
+      closeList();
+      output.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`);
+      continue;
+    }
+
+    closeList();
+    paragraph.push(line.trim());
+  }
+
+  if (codeFence) flushCode();
+  flushParagraph();
+  closeList();
+  return output.join("");
+}
+
+function renderInlineMarkdown(value: string): string {
+  return value
+    .split(/(`[^`\n]+`)/g)
+    .map((part) => {
+      if (part.startsWith("`") && part.endsWith("`")) {
+        return `<code>${escapeHTML(part.slice(1, -1))}</code>`;
+      }
+      return escapeHTML(part)
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+        .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+        .replace(/(^|[\s(])\*([^*]+)\*(?=$|[\s).,!?:;])/g, "$1<em>$2</em>")
+        .replace(/(^|[\s(])_([^_]+)_(?=$|[\s).,!?:;])/g, "$1<em>$2</em>");
+    })
+    .join("");
+}
+
 function assetHref(asset: WorkspaceAsset): string {
   const url = asset.download_url || asset.storage_path || "";
   if (url.startsWith("/")) return `${apiBase}${url}`;
@@ -551,7 +668,7 @@ async function loadConversationMessages() {
 
 function renderConversationMessage(message: ConversationMessage) {
   const role = message.role === "user" ? "user" : "assistant";
-  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${escapeHTML(message.content)}</div>`;
+  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${renderMessageContent(role, message.content)}</div>`;
 }
 
 function openMessageContextMenu(messageID: string, x: number, y: number) {
@@ -1041,7 +1158,7 @@ async function uploadAssetFile(file: File) {
 
 function appendMessage(role: "user" | "assistant", content: string) {
   const transcript = $("chatTranscript");
-  transcript.insertAdjacentHTML("beforeend", `<div class="message ${role}">${escapeHTML(content)}</div>`);
+  transcript.insertAdjacentHTML("beforeend", `<div class="message ${role}">${renderMessageContent(role, content)}</div>`);
   transcript.scrollTop = transcript.scrollHeight;
 }
 
@@ -1057,7 +1174,7 @@ function replaceWaitingMessage(id: string, content: string) {
   const message = document.getElementById(id);
   if (message) {
     message.className = "message assistant";
-    message.textContent = content;
+    message.innerHTML = renderMarkdown(content);
     return;
   }
   appendMessage("assistant", content);

@@ -998,7 +998,85 @@ textarea {
 
 .message.assistant {
   justify-self: start;
+  max-width: min(88%, 860px);
   background: var(--chip);
+}
+
+.message.assistant > :first-child {
+  margin-top: 0;
+}
+
+.message.assistant > :last-child {
+  margin-bottom: 0;
+}
+
+.message.assistant p {
+  margin: 0 0 0.8em;
+}
+
+.message.assistant h1,
+.message.assistant h2,
+.message.assistant h3,
+.message.assistant h4,
+.message.assistant h5,
+.message.assistant h6 {
+  margin: 1.1em 0 0.45em;
+  line-height: 1.25;
+}
+
+.message.assistant h1 { font-size: 1.45rem; }
+.message.assistant h2 { font-size: 1.3rem; }
+.message.assistant h3 { font-size: 1.15rem; }
+.message.assistant h4,
+.message.assistant h5,
+.message.assistant h6 { font-size: 1rem; }
+
+.message.assistant ul,
+.message.assistant ol {
+  margin: 0.55em 0 0.9em;
+  padding-left: 1.5em;
+}
+
+.message.assistant li + li {
+  margin-top: 0.35em;
+}
+
+.message.assistant hr {
+  margin: 1.1em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.message.assistant blockquote {
+  margin: 0.8em 0;
+  border-left: 3px solid var(--accent);
+  padding-left: 0.85em;
+  color: var(--muted);
+}
+
+.message.assistant code {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  padding: 0.12em 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.message.assistant pre {
+  overflow-x: auto;
+  margin: 0.8em 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 0.85em;
+  white-space: pre;
+}
+
+.message.assistant pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .message.pending-message {

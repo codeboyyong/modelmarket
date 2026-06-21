@@ -23,6 +23,7 @@ The product direction is documented in:
 - [implementation_plan.md](implementation_plan.md)
 - [docs/demo-accounts.md](docs/demo-accounts.md)
 - [docs/local-e2e-demo.md](docs/local-e2e-demo.md)
+- [docs/local-development.md](docs/local-development.md)
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
@@ -43,6 +44,8 @@ For full local stack:
 On macOS, Docker Desktop or Colima both work. See [docs/docker.md](docs/docker.md).
 
 For manual PostgreSQL setup, see [docs/postgresql.md](docs/postgresql.md).
+
+To run PostgreSQL in a standalone container while running the backend and frontend directly from source, see [docs/local-development.md](docs/local-development.md).
 
 ## Quick Check
 
