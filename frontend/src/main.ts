@@ -405,6 +405,29 @@ function assetHref(asset: WorkspaceAsset): string {
   return url;
 }
 
+function renderAssetMedia(asset: WorkspaceAsset, compact = false): string {
+  const href = assetHref(asset);
+  if (!href) return "";
+  const className = compact ? "sample-media compact" : "sample-media";
+  if (asset.asset_type === "image") {
+    return `<img class="${className}" src="${escapeHTML(href)}" alt="Sample generated image" loading="lazy">`;
+  }
+  if (asset.asset_type === "video") {
+    return `<video class="${className}" controls preload="metadata"><source src="${escapeHTML(href)}" type="${escapeHTML(asset.mime_type || "video/mp4")}">Your browser does not support video playback.</video>`;
+  }
+  if (asset.asset_type === "audio") {
+    return `<audio class="${className}" controls preload="metadata"><source src="${escapeHTML(href)}" type="${escapeHTML(asset.mime_type || "audio/mpeg")}">Your browser does not support audio playback.</audio>`;
+  }
+  return "";
+}
+
+function renderAssetDownload(asset: WorkspaceAsset): string {
+  const href = assetHref(asset);
+  if (!href) return "";
+  const label = `Download sample ${asset.asset_type}`;
+  return `<a class="sample-download" href="${escapeHTML(href)}" download>${escapeHTML(label)} <span aria-hidden="true">↓</span></a>`;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
@@ -563,9 +586,7 @@ function renderWorkspaceLists() {
     visibleAssets
       .map((asset) => {
         const href = assetHref(asset);
-        const preview = asset.asset_type === "image" && href
-          ? `<img class="artifact-preview" src="${escapeHTML(href)}" alt="${escapeHTML(asset.asset_type)} artifact preview">`
-          : "";
+        const preview = renderAssetMedia(asset, true);
         return `<div class="workspace-row artifact-row">
         <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
@@ -668,7 +689,22 @@ async function loadConversationMessages() {
 
 function renderConversationMessage(message: ConversationMessage) {
   const role = message.role === "user" ? "user" : "assistant";
-  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${renderMessageContent(role, message.content)}</div>`;
+  const messageAssets = role === "assistant" ? assetsForMessage(message) : [];
+  const media = messageAssets.length
+    ? `<div class="message-media-grid">${messageAssets.map((asset) => `<figure class="message-media-card">${renderAssetMedia(asset)}<figcaption><strong>Sample ${escapeHTML(asset.asset_type)}</strong>${renderAssetDownload(asset)}</figcaption></figure>`).join("")}</div>`
+    : "";
+  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${renderMessageContent(role, message.content)}${media}</div>`;
+}
+
+function assetsForMessage(message: ConversationMessage): WorkspaceAsset[] {
+  try {
+    const metadata = JSON.parse(message.metadata || "{}") as { asset_ids?: unknown };
+    if (!Array.isArray(metadata.asset_ids)) return [];
+    const ids = new Set(metadata.asset_ids.filter((id): id is string => typeof id === "string"));
+    return assets.filter((asset) => ids.has(asset.id));
+  } catch {
+    return [];
+  }
 }
 
 function openMessageContextMenu(messageID: string, x: number, y: number) {

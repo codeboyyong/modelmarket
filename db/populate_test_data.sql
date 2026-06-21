@@ -307,7 +307,10 @@ INSERT INTO user_conversation_branches (id, conversation_id, parent_branch_id, n
 
 INSERT INTO user_messages (id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata) VALUES
   ('message-demo-user', 'conversation-demo', 'branch-demo-main', 'user', 'What can I do in this model market?', NULL, NULL, 0, 0, '{}'),
-  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.', 'profile-mock-chat-default', NULL, 1, 0, '{"provider":"mock-provider"}'),
+  ('message-demo-assistant', 'conversation-demo', 'branch-demo-main', 'assistant', 'You can browse models, use the workbench, create API keys, and consume credits through mocked provider calls.
+
+### Sample media
+Preview or download the sample image, video, and audio below.', 'profile-mock-chat-default', NULL, 1, 0, '{"provider":"mock-provider","asset_ids":["asset-demo-image","asset-demo-video","asset-demo-audio"]}'),
   ('message-image-product-user', 'conversation-image-product', 'branch-image-product-main', 'user', 'Create a clean product hero image for a compact AI hardware device on a white desk.', NULL, NULL, 0, 0, '{}'),
   ('message-image-product-assistant', 'conversation-image-product', 'branch-image-product-main', 'assistant', 'Generated a bright studio concept with soft shadows, brushed metal details, and a minimal background suitable for a landing page hero.', 'profile-openrouter-mai-image-25-default', NULL, 10, 0, '{"provider":"openrouter","artifact":"asset-image-product-hero"}'),
   ('message-image-product-dark-user', 'conversation-image-product', 'branch-image-product-dark', 'user', 'Fork this concept into a darker premium version with a graphite desk and sharper rim light.', NULL, NULL, 0, 0, '{}'),
@@ -330,6 +333,9 @@ INSERT INTO user_workbench_assets (
   mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata
 ) VALUES
   ('asset-demo-text', 'project-demo', 'conversation-demo', 'branch-demo-main', 'text', 'uploaded', 's3://model-market-dev-assets/demo-project/uploads/demo.txt', 's3', 'model-market-dev-assets', 'demo-project/uploads/demo.txt', 'https://model-market-dev-assets.s3.amazonaws.com/demo-project/uploads/demo.txt', 'text/plain', 128, NULL, 0, 0, '{"mock":true}'),
+  ('asset-demo-image', 'project-demo', 'conversation-demo', 'branch-demo-main', 'image', 'generated', 'local://test_data/sample-image.jpg', 'local', '', 'test_data/sample-image.jpg', 'http://localhost:3000/test_data/sample-image.jpg', 'image/jpeg', 176218, NULL, 0, 0, '{"mock":true,"sample":true}'),
+  ('asset-demo-video', 'project-demo', 'conversation-demo', 'branch-demo-main', 'video', 'generated', 'local://test_data/sample-video.mp4', 'local', '', 'test_data/sample-video.mp4', 'http://localhost:3000/test_data/sample-video.mp4', 'video/mp4', 591680, NULL, 0, 0, '{"mock":true,"sample":true,"duration_seconds":6}'),
+  ('asset-demo-audio', 'project-demo', 'conversation-demo', 'branch-demo-main', 'audio', 'generated', 'local://test_data/sample-audio.mp3', 'local', '', 'test_data/sample-audio.mp3', 'http://localhost:3000/test_data/sample-audio.mp3', 'audio/mpeg', 129192, NULL, 0, 0, '{"mock":true,"sample":true,"duration_seconds":8}'),
   ('asset-image-product-hero', 'project-image-studio', 'conversation-image-product', 'branch-image-product-main', 'image', 'generated', 's3://model-market-dev-assets/project-image-studio/generated/product-hero.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/product-hero.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/product-hero.png', 'image/png', 2048000, NULL, 10, 0, '{"prompt":"compact AI hardware device on a white desk"}'),
   ('asset-image-avatar-board', 'project-image-studio', 'conversation-image-avatar', 'branch-image-avatar-main', 'image', 'generated', 's3://model-market-dev-assets/project-image-studio/generated/avatar-style-board.png', 's3', 'model-market-dev-assets', 'project-image-studio/generated/avatar-style-board.png', 'https://model-market-dev-assets.s3.amazonaws.com/project-image-studio/generated/avatar-style-board.png', 'image/png', 1536000, NULL, 10, 0, '{"prompt":"engineering team avatar style exploration"}'),
   ('asset-video-launch-storyboard', 'project-video-lab', 'conversation-video-launch', 'branch-video-launch-main', 'storyboard', 'generated', 's3://model-market-dev-assets/project-video-lab/generated/launch-teaser-storyboard.json', 's3', 'model-market-dev-assets', 'project-video-lab/generated/launch-teaser-storyboard.json', 'https://model-market-dev-assets.s3.amazonaws.com/project-video-lab/generated/launch-teaser-storyboard.json', 'application/json', 8192, NULL, 100, 10, '{"duration_seconds":10,"shots":3}'),
@@ -338,7 +344,10 @@ INSERT INTO user_workbench_assets (
   ('asset-acme-training-video', 'project-acme-video', 'conversation-acme-training-video', 'branch-acme-training-main', 'video', 'generated', 's3://model-market-dev-assets/project-acme-video/generated/training-draft.mp4', 's3', 'model-market-dev-assets', 'project-acme-video/generated/training-draft.mp4', 'https://model-market-dev-assets.s3.amazonaws.com/project-acme-video/generated/training-draft.mp4', 'video/mp4', 8388608, NULL, 70, 7, '{"actor_user_id":"user-corp-producer","duration_seconds":12}');
 
 INSERT INTO user_message_attachments (id, message_id, asset_id) VALUES
-  ('attachment-demo-text', 'message-demo-user', 'asset-demo-text');
+  ('attachment-demo-text', 'message-demo-user', 'asset-demo-text'),
+  ('attachment-demo-image', 'message-demo-assistant', 'asset-demo-image'),
+  ('attachment-demo-video', 'message-demo-assistant', 'asset-demo-video'),
+  ('attachment-demo-audio', 'message-demo-assistant', 'asset-demo-audio');
 
 INSERT INTO user_file_extractions (id, asset_id, extracted_text, metadata) VALUES
   ('extraction-demo-text', 'asset-demo-text', 'This is mocked extracted text for local development.', '{}');

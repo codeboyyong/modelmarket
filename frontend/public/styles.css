@@ -1147,6 +1147,64 @@ textarea {
   padding: 0;
 }
 
+.message-media-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.message-media-card {
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.sample-media {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  background: #090d18;
+  object-fit: contain;
+}
+
+audio.sample-media {
+  min-height: 54px;
+  padding: 8px;
+  background: var(--panel-2);
+}
+
+.sample-media.compact {
+  max-width: 220px;
+  max-height: 140px;
+  border-radius: 6px;
+}
+
+audio.sample-media.compact {
+  width: 220px;
+  min-height: 44px;
+}
+
+.message-media-card figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.sample-download {
+  color: var(--accent-2);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.sample-download:hover {
+  text-decoration: underline;
+}
+
 .message.pending-message {
   display: inline-flex;
   align-items: center;

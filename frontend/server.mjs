@@ -11,7 +11,12 @@ const contentTypes = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".mp4": "video/mp4",
+  ".mp3": "audio/mpeg"
 };
 
 createServer(async (req, res) => {
