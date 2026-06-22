@@ -528,7 +528,12 @@ func (a *App) adminOverview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, response{"configs": configs, "routes": routes, "balances": balances, "recent_inferences": inferences})
+	providerCredentials, err := a.adminProviderCredentials(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"configs": configs, "routes": routes, "balances": balances, "recent_inferences": inferences, "provider_credentials": providerCredentials})
 }
 
 func (a *App) adminConfigs(ctx context.Context) ([]response, error) {
@@ -571,6 +576,105 @@ func (a *App) adminRoutes(ctx context.Context) ([]response, error) {
 		items = append(items, response{"id": id, "model": model, "modality": modality, "provider": provider, "channel": channel, "status": status, "priority": priority, "weight": weight})
 	}
 	return items, rows.Err()
+}
+
+func (a *App) adminProviderCredentials(ctx context.Context) ([]response, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		select distinct p.name, p.slug, coalesce(c.credential_ref, p.credential_ref, ''), coalesce(c.status, p.status)
+		from sys_providers p
+		left join sys_provider_channels c on c.provider_id = p.id
+		order by p.name, coalesce(c.credential_ref, p.credential_ref, '')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []response{}
+	for rows.Next() {
+		var provider, slug, credentialRef, status string
+		if err := rows.Scan(&provider, &slug, &credentialRef, &status); err != nil {
+			return nil, err
+		}
+		items = append(items, credentialStatus(provider, slug, "Model API", credentialRef, status))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	oauthCredentials := []struct {
+		provider string
+		slug     string
+		ref      string
+	}{
+		{"Google", "google", "GOOGLE_CLIENT_ID"},
+		{"Google", "google", "GOOGLE_CLIENT_SECRET"},
+		{"Facebook", "facebook", "FACEBOOK_CLIENT_ID"},
+		{"Facebook", "facebook", "FACEBOOK_CLIENT_SECRET"},
+		{"GitHub", "github", "GITHUB_CLIENT_ID"},
+		{"GitHub", "github", "GITHUB_CLIENT_SECRET"},
+	}
+	for _, credential := range oauthCredentials {
+		items = append(items, credentialStatus(credential.provider, credential.slug, "OAuth", credential.ref, "active"))
+	}
+	return items, nil
+}
+
+func credentialStatus(provider, slug, purpose, credentialRef, status string) response {
+	value, _ := os.LookupEnv(credentialRef)
+	pool := parseCredentialPool(value)
+	configured := len(pool) > 0
+	maskedValue := "Not configured"
+	if credentialRef == "" {
+		maskedValue = "Not required"
+	} else if configured {
+		masked := make([]string, 0, len(pool))
+		for _, credential := range pool {
+			masked = append(masked, maskCredential(credential))
+		}
+		maskedValue = strings.Join(masked, ", ")
+	}
+	return response{
+		"provider": provider, "provider_slug": slug, "purpose": purpose,
+		"credential_ref": credentialRef, "configured": configured,
+		"masked_value": maskedValue, "key_count": len(pool), "status": status,
+	}
+}
+
+func parseCredentialPool(value string) []string {
+	parts := strings.Split(value, ",")
+	pool := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if credential := strings.TrimSpace(part); credential != "" {
+			pool = append(pool, credential)
+		}
+	}
+	return pool
+}
+
+func (a *App) providerCredential(credentialRef string) (string, int, error) {
+	pool := parseCredentialPool(os.Getenv(credentialRef))
+	if len(pool) == 0 {
+		return "", 0, fmt.Errorf("%s is not set", credentialRef)
+	}
+	a.credentialPoolMu.Lock()
+	defer a.credentialPoolMu.Unlock()
+	if a.credentialPoolNext == nil {
+		a.credentialPoolNext = map[string]uint64{}
+	}
+	index := a.credentialPoolNext[credentialRef] % uint64(len(pool))
+	a.credentialPoolNext[credentialRef]++
+	return pool[index], len(pool), nil
+}
+
+func maskCredential(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 4 {
+		return "********"
+	}
+	prefixLength := 3
+	if len(value) < 8 {
+		prefixLength = 1
+	}
+	return value[:prefixLength] + "********" + value[len(value)-4:]
 }
 
 func (a *App) adminProjectBalances(ctx context.Context) ([]response, error) {
@@ -2197,9 +2301,9 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 	if apiKeyName == "" {
 		apiKeyName = "GEMINI_API_KEY"
 	}
-	apiKey := strings.TrimSpace(os.Getenv(apiKeyName))
-	if apiKey == "" {
-		return upstreamChatResult{}, fmt.Errorf("%s is not set", apiKeyName)
+	apiKey, _, err := a.providerCredential(apiKeyName)
+	if err != nil {
+		return upstreamChatResult{}, err
 	}
 
 	type geminiPart struct {

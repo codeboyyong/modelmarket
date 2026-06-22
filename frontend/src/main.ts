@@ -206,6 +206,7 @@ type CompanyUsageResponse = {
 
 type AdminOverviewResponse = {
   configs: Array<{ key: string; value: string; description: string }>;
+  provider_credentials: Array<{ provider: string; provider_slug: string; purpose: string; credential_ref: string; configured: boolean; masked_value: string; key_count: number; status: string }>;
   balances: Array<{ id: string; name: string; wallet_credits: number; credits_used: number; available_credits: number }>;
   routes: Array<{ id: string; model: string; modality: string; provider: string; channel: string; status: string; priority: number; weight: number }>;
   recent_inferences: Array<{ id: string; model: string; provider: string; status: string; customer_charge: number; provider_cost: number; created_at: string }>;
@@ -235,6 +236,7 @@ let currentBranchID = "";
 let branchSourceMessageID = "";
 let promptSending = false;
 let outputParamsOpen = false;
+let activeAdminView = "overview";
 let outputParameterValues: Record<string, Record<string, string | number | boolean>> = {};
 const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
@@ -1246,6 +1248,7 @@ async function loadAdminOverview() {
   const user = getStoredUser();
   if (!user || !isAdminUser(user)) {
     $("adminConfigRows").innerHTML = "<div class=\"meta-row\"><span><strong>Admin required</strong><small>Log in as a system admin.</small></span><span>-</span></div>";
+    $("adminProviderCredentialRows").innerHTML = "<tr><td colspan=\"5\">Log in as a system administrator.</td></tr>";
     return;
   }
   try {
@@ -1254,6 +1257,7 @@ async function loadAdminOverview() {
   } catch (error) {
     const message = escapeHTML(error instanceof Error ? error.message : String(error));
     $("adminConfigRows").innerHTML = `<div class="meta-row"><span><strong>Load failed</strong><small>${message}</small></span><span>-</span></div>`;
+    $("adminProviderCredentialRows").innerHTML = `<tr><td colspan="5">${message}</td></tr>`;
   }
 }
 
@@ -1263,6 +1267,16 @@ function renderAdminOverview(data: AdminOverviewResponse) {
       .filter((item) => ["payment_provider_mode", "payment_mock_enabled", "usd_to_credit_ratio", "s3_bucket_name", "low_credit_warning_threshold"].includes(item.key))
       .map((item) => metaRow(formatPriceType(item.key), item.value, item.description))
       .join("") || "<div class=\"empty-state\">No config rows found.</div>";
+  $("adminProviderCredentialRows").innerHTML =
+    data.provider_credentials
+      .map((credential) => `<tr>
+        <td><strong>${escapeHTML(credential.provider)}</strong><small>${escapeHTML(credential.provider_slug)}</small></td>
+        <td>${escapeHTML(credential.purpose)}</td>
+        <td><code>${escapeHTML(credential.credential_ref || "-")}</code></td>
+        <td><code class="masked-credential">${escapeHTML(credential.masked_value)}</code></td>
+        <td><span class="tag ${credential.configured || !credential.credential_ref ? "configured" : "not-configured"}">${credential.configured ? `${credential.key_count} key${credential.key_count === 1 ? "" : "s"}` : credential.credential_ref ? "Missing" : "Not required"}</span></td>
+      </tr>`)
+      .join("") || "<tr><td colspan=\"5\">No provider credentials found.</td></tr>";
   $("adminBalanceRows").innerHTML =
     data.balances
       .map((row) => `<tr>
@@ -1807,11 +1821,25 @@ function setActiveTab(tab: string) {
     if (user) void loadCorporateUsage(user);
   }
   if (nextTab === "admin") {
+    setAdminView(activeAdminView);
     void loadAdminOverview();
   }
   if (nextTab === "credit-usage") {
     renderUserCreditUsage();
   }
+}
+
+function setAdminView(view: string) {
+  const availableViews = new Set(["overview", "projects", "settings", "providers", "routing", "inferences"]);
+  activeAdminView = availableViews.has(view) ? view : "overview";
+  document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
+    const active = button.dataset.adminView === activeAdminView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll<HTMLElement>("[data-admin-panel]").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.adminPanel !== activeAdminView);
+  });
 }
 
 function openLogin() {
@@ -2113,6 +2141,9 @@ function completeAuth(auth: AuthResponse, message: string) {
 
 function renderAuthUser() {
   const user = getStoredUser();
+  document.querySelectorAll<HTMLElement>("[data-hide-for-admin]").forEach((item) => {
+    item.classList.toggle("hidden", Boolean(user && isAdminUser(user)));
+  });
   if (!user) {
     $("loginButton").textContent = "Login";
     $("loginButton").setAttribute("aria-expanded", "false");
@@ -2183,6 +2214,8 @@ function closeAccountMenu() {
 
 function accountAction(action: string) {
   closeAccountMenu();
+  const user = getStoredUser();
+  if (user && isAdminUser(user) && (action === "buy-credit" || action === "credit-usage")) return;
   if (action === "settings") {
     openSettings();
     return;
@@ -2431,6 +2464,9 @@ systemTheme.addEventListener("change", () => {
 });
 document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => setActiveTab(button.dataset.tab || "models"));
+});
+document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
+  button.addEventListener("click", () => setAdminView(button.dataset.adminView || "overview"));
 });
 window.addEventListener("hashchange", () => setActiveTab(window.location.hash.slice(1)));
 

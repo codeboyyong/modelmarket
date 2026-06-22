@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"model-market/backend/internal/config"
 )
@@ -19,6 +20,9 @@ type App struct {
 	Redis  RedisPinger
 	Logger *slog.Logger
 	Client *http.Client
+
+	credentialPoolMu   sync.Mutex
+	credentialPoolNext map[string]uint64
 }
 
 func (a *App) Routes() http.Handler {

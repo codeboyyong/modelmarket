@@ -27,8 +27,8 @@
             <div class="account-dropdown hidden" id="accountMenu" role="menu" aria-label="Account menu">
               <button type="button" role="menuitem" data-account-action="settings">Settings</button>
               <button type="button" role="menuitem" data-account-action="profile">User Profile</button>
-              <button type="button" role="menuitem" data-account-action="buy-credit">Buy Credit</button>
-              <button type="button" role="menuitem" data-account-action="credit-usage">Credit Usage</button>
+              <button type="button" role="menuitem" data-account-action="buy-credit" data-hide-for-admin>Buy Credit</button>
+              <button type="button" role="menuitem" data-account-action="credit-usage" data-hide-for-admin>Credit Usage</button>
               <button type="button" role="menuitem" data-account-action="logout">Logout</button>
             </div>
           </div>
@@ -452,59 +452,94 @@
           <p class="eyebrow">Admin</p>
           <h2>Admin dashboard</h2>
           <p>Manage marketplace setup, users, model metadata, pricing, and provider status from this internal workspace.</p>
-          <div class="admin-summary">
-            <div>
-              <strong id="adminUserName">Admin User</strong>
-              <small>Signed in administrator</small>
+          <div class="admin-tabs" role="tablist" aria-label="Admin dashboard sections">
+            <button class="admin-tab active" type="button" role="tab" aria-selected="true" data-admin-view="overview">Overview</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="projects">Project Info</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="settings">Settings</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="providers">Provider API Keys</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="routing">Routing</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="inferences">Recent Inferences</button>
+          </div>
+
+          <div class="admin-subpanel" role="tabpanel" data-admin-panel="overview">
+            <div class="admin-summary">
+              <div>
+                <strong id="adminUserName">Admin User</strong>
+                <small>Signed in administrator</small>
+              </div>
+              <div>
+                <strong>Dev</strong>
+                <small>Environment</small>
+              </div>
+              <div>
+                <strong>Active</strong>
+                <small>Platform status</small>
+              </div>
             </div>
-            <div>
-              <strong>Dev</strong>
-              <small>Environment</small>
-            </div>
-            <div>
-              <strong>Active</strong>
-              <small>Platform status</small>
+            <h3>Platform overview</h3>
+            <div id="metadataRows" class="admin-table">Loading metadata...</div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="projects">
+            <h3>Project information</h3>
+            <p class="admin-section-note">Wallet allocation, usage, and available credits by project.</p>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr><th>Project</th><th>Wallet</th><th>Used</th><th>Available</th></tr>
+                </thead>
+                <tbody id="adminBalanceRows"><tr><td colspan="4">Loading balances...</td></tr></tbody>
+              </table>
             </div>
           </div>
-          <div id="metadataRows" class="admin-table">Loading metadata...</div>
-          <div class="admin-dashboard-grid">
-            <section>
-              <h3>Project balances</h3>
-              <div class="pricing-table-wrap">
-                <table class="pricing-table">
-                  <thead>
-                    <tr><th>Project</th><th>Wallet</th><th>Used</th><th>Available</th></tr>
-                  </thead>
-                  <tbody id="adminBalanceRows"><tr><td colspan="4">Loading balances...</td></tr></tbody>
-                </table>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="settings">
+            <h3>Runtime settings</h3>
+            <p class="admin-section-note">Current marketplace, payment, storage, and credit configuration.</p>
+            <div id="adminConfigRows" class="admin-table">Loading config...</div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="providers">
+            <div class="workspace-section-head">
+              <div>
+                <h3>Provider API keys</h3>
+                <p class="admin-section-note">Configure each environment variable as a comma-separated key pool. Secret values are always masked.</p>
               </div>
-            </section>
-            <section>
-              <h3>Runtime config</h3>
-              <div id="adminConfigRows" class="admin-table">Loading config...</div>
-            </section>
-            <section>
-              <h3>Routes</h3>
-              <div class="pricing-table-wrap">
-                <table class="pricing-table">
-                  <thead>
-                    <tr><th>Model</th><th>Provider</th><th>Channel</th><th>Status</th></tr>
-                  </thead>
-                  <tbody id="adminRouteRows"><tr><td colspan="4">Loading routes...</td></tr></tbody>
-                </table>
-              </div>
-            </section>
-            <section>
-              <h3>Recent inferences</h3>
-              <div class="pricing-table-wrap">
-                <table class="pricing-table">
-                  <thead>
-                    <tr><th>Request</th><th>Model</th><th>Status</th><th>Charge</th></tr>
-                  </thead>
-                  <tbody id="adminInferenceRows"><tr><td colspan="4">Loading inferences...</td></tr></tbody>
-                </table>
-              </div>
-            </section>
+            </div>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr><th>Provider</th><th>Purpose</th><th>Environment variable</th><th>Value</th><th>Status</th></tr>
+                </thead>
+                <tbody id="adminProviderCredentialRows"><tr><td colspan="5">Loading provider credentials...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="routing">
+            <h3>Provider routing</h3>
+            <p class="admin-section-note">Model-to-provider channel priority, weight, and status.</p>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr><th>Model</th><th>Provider</th><th>Channel</th><th>Status</th></tr>
+                </thead>
+                <tbody id="adminRouteRows"><tr><td colspan="4">Loading routes...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="inferences">
+            <h3>Recent inferences</h3>
+            <p class="admin-section-note">Latest routed requests with provider, status, charge, and cost.</p>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr><th>Request</th><th>Model</th><th>Status</th><th>Charge</th></tr>
+                </thead>
+                <tbody id="adminInferenceRows"><tr><td colspan="4">Loading inferences...</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </article>
       </section>

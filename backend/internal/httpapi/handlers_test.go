@@ -727,6 +727,74 @@ func TestAPIKeys(t *testing.T) {
 	}
 }
 
+func TestCredentialStatusMasksConfiguredSecret(t *testing.T) {
+	t.Setenv("TEST_PROVIDER_API_KEY", "sk_test_1234567890")
+
+	item := credentialStatus("Test Provider", "test-provider", "Model API", "TEST_PROVIDER_API_KEY", "active")
+	if configured, ok := item["configured"].(bool); !ok || !configured {
+		t.Fatalf("configured = %v, want true", item["configured"])
+	}
+	if got := item["masked_value"]; got != "sk_********7890" {
+		t.Fatalf("masked_value = %v, want sk_********7890", got)
+	}
+	if got := item["credential_ref"]; got != "TEST_PROVIDER_API_KEY" {
+		t.Fatalf("credential_ref = %v", got)
+	}
+}
+
+func TestCredentialStatusDoesNotExposeMissingOrShortSecrets(t *testing.T) {
+	missing := credentialStatus("Missing", "missing", "OAuth", "MISSING_PROVIDER_KEY", "active")
+	if got := missing["masked_value"]; got != "Not configured" {
+		t.Fatalf("missing masked_value = %v", got)
+	}
+
+	t.Setenv("SHORT_PROVIDER_KEY", "abcd")
+	short := credentialStatus("Short", "short", "OAuth", "SHORT_PROVIDER_KEY", "active")
+	if got := short["masked_value"]; got != "********" {
+		t.Fatalf("short masked_value = %v", got)
+	}
+}
+
+func TestCredentialStatusReportsMaskedPool(t *testing.T) {
+	t.Setenv("POOLED_PROVIDER_KEYS", " sk_first_1234, ,sk_second_5678 ")
+
+	item := credentialStatus("Pool", "pool", "Model API", "POOLED_PROVIDER_KEYS", "active")
+	if got := item["key_count"]; got != 2 {
+		t.Fatalf("key_count = %v, want 2", got)
+	}
+	if got := item["masked_value"]; got != "sk_********1234, sk_********5678" {
+		t.Fatalf("masked_value = %v", got)
+	}
+}
+
+func TestProviderCredentialRotatesPool(t *testing.T) {
+	t.Setenv("ROTATING_PROVIDER_KEYS", "key-one, key-two,,key-three")
+	app := &App{}
+
+	want := []string{"key-one", "key-two", "key-three", "key-one"}
+	for index, expected := range want {
+		got, count, err := app.providerCredential("ROTATING_PROVIDER_KEYS")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count != 3 {
+			t.Fatalf("call %d count = %d, want 3", index, count)
+		}
+		if got != expected {
+			t.Fatalf("call %d credential = %q, want %q", index, got, expected)
+		}
+	}
+}
+
+func TestProviderCredentialRejectsEmptyPool(t *testing.T) {
+	t.Setenv("EMPTY_PROVIDER_KEYS", " , , ")
+	app := &App{}
+
+	if _, _, err := app.providerCredential("EMPTY_PROVIDER_KEYS"); err == nil {
+		t.Fatal("expected empty credential pool error")
+	}
+}
+
 func stripeTestSignature(payload []byte, secret string) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(secret))
