@@ -514,6 +514,7 @@ function openProjectPicker(clearFilter = false) {
 }
 
 function closeProjectPicker() {
+  if (!projectPickerOpen) return;
   projectPickerOpen = false;
   renderProjects();
 }
@@ -656,6 +657,7 @@ function openConversationPicker(clearFilter = false) {
 }
 
 function closeConversationPicker() {
+  if (!conversationPickerOpen) return;
   conversationPickerOpen = false;
   renderWorkspaceLists();
 }
@@ -824,6 +826,7 @@ function openWorkbenchPicker(clearFilter = false) {
 }
 
 function closeWorkbenchPicker() {
+  if (!workbenchPickerOpen) return;
   workbenchPickerOpen = false;
   renderSelectedWorkbenchModel();
   renderWorkbenchModelPicker();
@@ -914,6 +917,7 @@ function updateOutputParameter(target: HTMLInputElement | HTMLSelectElement) {
   } else {
     outputParameterValues[modelKey][key] = target.value;
   }
+  $("outputParamsSummary").textContent = compactParameterSummary(currentOutputParameters()) || "Use the selected profile defaults.";
 }
 
 function parameterDefaults(model: Model) {
@@ -1248,7 +1252,8 @@ async function loadAdminOverview() {
   const user = getStoredUser();
   if (!user || !isAdminUser(user)) {
     $("adminConfigRows").innerHTML = "<div class=\"meta-row\"><span><strong>Admin required</strong><small>Log in as a system admin.</small></span><span>-</span></div>";
-    $("adminProviderCredentialRows").innerHTML = "<tr><td colspan=\"5\">Log in as a system administrator.</td></tr>";
+    $("adminProviderCredentialRows").innerHTML = "<tr><td colspan=\"6\">Log in as a system administrator.</td></tr>";
+    $("adminIntegrationCredentialRows").innerHTML = "<tr><td colspan=\"6\">Log in as a system administrator.</td></tr>";
     return;
   }
   try {
@@ -1257,7 +1262,8 @@ async function loadAdminOverview() {
   } catch (error) {
     const message = escapeHTML(error instanceof Error ? error.message : String(error));
     $("adminConfigRows").innerHTML = `<div class="meta-row"><span><strong>Load failed</strong><small>${message}</small></span><span>-</span></div>`;
-    $("adminProviderCredentialRows").innerHTML = `<tr><td colspan="5">${message}</td></tr>`;
+    $("adminProviderCredentialRows").innerHTML = `<tr><td colspan="6">${message}</td></tr>`;
+    $("adminIntegrationCredentialRows").innerHTML = `<tr><td colspan="6">${message}</td></tr>`;
   }
 }
 
@@ -1268,15 +1274,9 @@ function renderAdminOverview(data: AdminOverviewResponse) {
       .map((item) => metaRow(formatPriceType(item.key), item.value, item.description))
       .join("") || "<div class=\"empty-state\">No config rows found.</div>";
   $("adminProviderCredentialRows").innerHTML =
-    data.provider_credentials
-      .map((credential) => `<tr>
-        <td><strong>${escapeHTML(credential.provider)}</strong><small>${escapeHTML(credential.provider_slug)}</small></td>
-        <td>${escapeHTML(credential.purpose)}</td>
-        <td><code>${escapeHTML(credential.credential_ref || "-")}</code></td>
-        <td><code class="masked-credential">${escapeHTML(credential.masked_value)}</code></td>
-        <td><span class="tag ${credential.configured || !credential.credential_ref ? "configured" : "not-configured"}">${credential.configured ? `${credential.key_count} key${credential.key_count === 1 ? "" : "s"}` : credential.credential_ref ? "Missing" : "Not required"}</span></td>
-      </tr>`)
-      .join("") || "<tr><td colspan=\"5\">No provider credentials found.</td></tr>";
+    renderCredentialRows(data.provider_credentials.filter((credential) => credential.purpose === "Model API"), "No model-provider credentials found.");
+  $("adminIntegrationCredentialRows").innerHTML =
+    renderCredentialRows(data.provider_credentials.filter((credential) => credential.purpose !== "Model API"), "No integration credentials found.");
   $("adminBalanceRows").innerHTML =
     data.balances
       .map((row) => `<tr>
@@ -1306,6 +1306,31 @@ function renderAdminOverview(data: AdminOverviewResponse) {
         <td><strong>${Number(row.customer_charge || 0).toLocaleString()}</strong><small>Cost ${Number(row.provider_cost || 0).toLocaleString()}</small></td>
       </tr>`)
       .join("") || "<tr><td colspan=\"4\">No inference requests yet.</td></tr>";
+}
+
+function renderCredentialRows(credentials: AdminOverviewResponse["provider_credentials"], emptyMessage: string) {
+  return credentials
+    .map((credential) => `<tr>
+      <td><strong>${escapeHTML(credential.provider)}</strong><small>${escapeHTML(credential.provider_slug)}</small></td>
+      <td>${escapeHTML(credential.purpose)}</td>
+      <td><code>${escapeHTML(credential.credential_ref || "-")}</code></td>
+      <td><code class="masked-credential">${escapeHTML(credential.masked_value)}</code></td>
+      <td><span class="tag ${credential.configured || !credential.credential_ref ? "configured" : "not-configured"}">${credential.configured ? `${credential.key_count} token${credential.key_count === 1 ? "" : "s"}` : credential.credential_ref ? "Missing" : "Not required"}</span></td>
+      <td>${credential.credential_ref ? `<button class="ghost mini-button" type="button" data-edit-credential="${escapeHTML(credential.credential_ref)}">Edit</button>` : "-"}</td>
+    </tr>`)
+    .join("") || `<tr><td colspan="6">${escapeHTML(emptyMessage)}</td></tr>`;
+}
+
+async function editAdminCredential(credentialRef: string) {
+  const user = getStoredUser();
+  if (!user || !isAdminUser(user)) return;
+  const value = window.prompt(`Enter the comma-separated runtime token pool for ${credentialRef}. Leave empty to clear it.`);
+  if (value === null) return;
+  await request("/api/v1/admin/provider-credentials", {
+    method: "POST",
+    body: JSON.stringify({ user_id: user.id, credential_ref: credentialRef, value })
+  });
+  await loadAdminOverview();
 }
 
 function renderPricing() {
@@ -1830,7 +1855,7 @@ function setActiveTab(tab: string) {
 }
 
 function setAdminView(view: string) {
-  const availableViews = new Set(["overview", "projects", "settings", "providers", "routing", "inferences"]);
+  const availableViews = new Set(["overview", "projects", "settings", "providers", "integrations", "routing", "inferences"]);
   activeAdminView = availableViews.has(view) ? view : "overview";
   document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
     const active = button.dataset.adminView === activeAdminView;
@@ -2407,7 +2432,6 @@ $("workbenchModelList").addEventListener("click", (event) => {
   if (!button) return;
   selectedWorkbenchModel = button.dataset.workbenchModel || selectedWorkbenchModel;
   closeWorkbenchPicker();
-  renderOutputParameterControls();
 });
 $("outputParamsButton").addEventListener("click", toggleOutputParameters);
 $("closeOutputParams").addEventListener("click", () => {
@@ -2467,6 +2491,12 @@ document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
 });
 document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
   button.addEventListener("click", () => setAdminView(button.dataset.adminView || "overview"));
+});
+[$("adminProviderCredentialRows"), $("adminIntegrationCredentialRows")].forEach((tableBody) => {
+  tableBody.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-edit-credential]");
+    if (button) void editAdminCredential(button.dataset.editCredential || "");
+  });
 });
 window.addEventListener("hashchange", () => setActiveTab(window.location.hash.slice(1)));
 

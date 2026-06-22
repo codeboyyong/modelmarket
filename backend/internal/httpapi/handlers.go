@@ -536,6 +536,78 @@ func (a *App) adminOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"configs": configs, "routes": routes, "balances": balances, "recent_inferences": inferences, "provider_credentials": providerCredentials})
 }
 
+func (a *App) updateAdminProviderCredential(w http.ResponseWriter, r *http.Request) {
+	if !a.Config.DevMode {
+		writeJSON(w, http.StatusForbidden, response{"error": "credential_updates_disabled"})
+		return
+	}
+	var req struct {
+		UserID        string `json:"user_id"`
+		CredentialRef string `json:"credential_ref"`
+		Value         string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.CredentialRef = strings.TrimSpace(req.CredentialRef)
+	if req.UserID == "" || req.CredentialRef == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credential_fields"})
+		return
+	}
+	var userType string
+	if err := a.DB.QueryRowContext(r.Context(), `select user_type from sys_users where id = $1`, req.UserID).Scan(&userType); err != nil || userType != "sys_admin" {
+		writeJSON(w, http.StatusForbidden, response{"error": "sys_admin_required"})
+		return
+	}
+	allowed, err := a.isAllowedCredentialRef(r.Context(), req.CredentialRef)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusBadRequest, response{"error": "unknown_credential_ref"})
+		return
+	}
+	value := strings.TrimSpace(req.Value)
+	pool := parseCredentialPool(value)
+	if len(pool) == 0 {
+		_ = os.Unsetenv(req.CredentialRef)
+	} else {
+		_ = os.Setenv(req.CredentialRef, strings.Join(pool, ","))
+	}
+	writeJSON(w, http.StatusOK, response{"credential": credentialStatus("", "", "", req.CredentialRef, "active"), "runtime_only": true})
+}
+
+func (a *App) isAllowedCredentialRef(ctx context.Context, credentialRef string) (bool, error) {
+	if isIntegrationCredentialRef(credentialRef) {
+		return true, nil
+	}
+	var count int
+	err := a.DB.QueryRowContext(ctx, `
+		select count(*)
+		from (
+			select credential_ref from sys_providers
+			union all
+			select credential_ref from sys_provider_channels
+		) credentials
+		where credential_ref = $1`, credentialRef).Scan(&count)
+	return count > 0, err
+}
+
+func isIntegrationCredentialRef(credentialRef string) bool {
+	switch credentialRef {
+	case "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+		"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+		"FACEBOOK_CLIENT_ID", "FACEBOOK_CLIENT_SECRET",
+		"GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) adminConfigs(ctx context.Context) ([]response, error) {
 	rows, err := a.DB.QueryContext(ctx, `select conf_key, conf_value, coalesce(description, '') from sys_config order by conf_key asc`)
 	if err != nil {
@@ -600,20 +672,23 @@ func (a *App) adminProviderCredentials(ctx context.Context) ([]response, error) 
 		return nil, err
 	}
 
-	oauthCredentials := []struct {
+	integrationCredentials := []struct {
 		provider string
 		slug     string
+		purpose  string
 		ref      string
 	}{
-		{"Google", "google", "GOOGLE_CLIENT_ID"},
-		{"Google", "google", "GOOGLE_CLIENT_SECRET"},
-		{"Facebook", "facebook", "FACEBOOK_CLIENT_ID"},
-		{"Facebook", "facebook", "FACEBOOK_CLIENT_SECRET"},
-		{"GitHub", "github", "GITHUB_CLIENT_ID"},
-		{"GitHub", "github", "GITHUB_CLIENT_SECRET"},
+		{"Stripe", "stripe", "Payment API", "STRIPE_SECRET_KEY"},
+		{"Stripe", "stripe", "Webhook", "STRIPE_WEBHOOK_SECRET"},
+		{"Google", "google", "OAuth", "GOOGLE_CLIENT_ID"},
+		{"Google", "google", "OAuth", "GOOGLE_CLIENT_SECRET"},
+		{"Facebook", "facebook", "OAuth", "FACEBOOK_CLIENT_ID"},
+		{"Facebook", "facebook", "OAuth", "FACEBOOK_CLIENT_SECRET"},
+		{"GitHub", "github", "OAuth", "GITHUB_CLIENT_ID"},
+		{"GitHub", "github", "OAuth", "GITHUB_CLIENT_SECRET"},
 	}
-	for _, credential := range oauthCredentials {
-		items = append(items, credentialStatus(credential.provider, credential.slug, "OAuth", credential.ref, "active"))
+	for _, credential := range integrationCredentials {
+		items = append(items, credentialStatus(credential.provider, credential.slug, credential.purpose, credential.ref, "active"))
 	}
 	return items, nil
 }

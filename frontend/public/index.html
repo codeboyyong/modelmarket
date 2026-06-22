@@ -457,6 +457,7 @@
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="projects">Project Info</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="settings">Settings</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="providers">Provider API Keys</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="integrations">Integration API Tokens</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="routing">Routing</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="inferences">Recent Inferences</button>
           </div>
@@ -503,15 +504,32 @@
             <div class="workspace-section-head">
               <div>
                 <h3>Provider API keys</h3>
-                <p class="admin-section-note">Configure each environment variable as a comma-separated key pool. Secret values are always masked.</p>
+                <p class="admin-section-note">Configure each environment variable as a comma-separated key pool. Changes apply to this backend process only; secret values are always masked.</p>
               </div>
             </div>
             <div class="pricing-table-wrap">
               <table class="pricing-table">
                 <thead>
-                  <tr><th>Provider</th><th>Purpose</th><th>Environment variable</th><th>Value</th><th>Status</th></tr>
+                  <tr><th>Provider</th><th>Purpose</th><th>Environment variable</th><th>Value</th><th>Status</th><th>Action</th></tr>
                 </thead>
-                <tbody id="adminProviderCredentialRows"><tr><td colspan="5">Loading provider credentials...</td></tr></tbody>
+                <tbody id="adminProviderCredentialRows"><tr><td colspan="6">Loading provider credentials...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="integrations">
+            <div class="workspace-section-head">
+              <div>
+                <h3>Integration API tokens</h3>
+                <p class="admin-section-note">Edit Stripe, Google, Facebook, and GitHub runtime credentials. Changes apply to this backend process only and are always masked.</p>
+              </div>
+            </div>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead>
+                  <tr><th>Integration</th><th>Purpose</th><th>Environment variable</th><th>Value</th><th>Status</th><th>Action</th></tr>
+                </thead>
+                <tbody id="adminIntegrationCredentialRows"><tr><td colspan="6">Loading integration credentials...</td></tr></tbody>
               </table>
             </div>
           </div>

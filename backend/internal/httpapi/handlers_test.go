@@ -795,6 +795,51 @@ func TestProviderCredentialRejectsEmptyPool(t *testing.T) {
 	}
 }
 
+func TestUpdateAdminProviderCredential(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	t.Setenv("GEMINI_API_KEY", "old-key")
+
+	mock.ExpectQuery("select user_type from sys_users").
+		WithArgs("user-admin").
+		WillReturnRows(sqlmock.NewRows([]string{"user_type"}).AddRow("sys_admin"))
+	mock.ExpectQuery("select count\\(\\*\\)").
+		WithArgs("GEMINI_API_KEY").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/provider-credentials", bytes.NewBufferString(`{"user_id":"user-admin","credential_ref":"GEMINI_API_KEY","value":"key-one, key-two"}`))
+	rec := httptest.NewRecorder()
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if got := os.Getenv("GEMINI_API_KEY"); got != "key-one,key-two" {
+		t.Fatalf("GEMINI_API_KEY = %q", got)
+	}
+	if strings.Contains(rec.Body.String(), "key-one") || strings.Contains(rec.Body.String(), "key-two") {
+		t.Fatalf("response exposed raw credentials: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateAdminProviderCredentialRequiresDevMode(t *testing.T) {
+	app, _, cleanup := testApp(t)
+	defer cleanup()
+	app.Config.DevMode = false
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/provider-credentials", bytes.NewBufferString(`{"user_id":"user-admin","credential_ref":"GEMINI_API_KEY","value":"secret"}`))
+	rec := httptest.NewRecorder()
+	app.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertJSONField(t, rec.Body.Bytes(), "error", "credential_updates_disabled")
+}
+
 func stripeTestSignature(payload []byte, secret string) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(secret))
