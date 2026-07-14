@@ -212,7 +212,9 @@ type AdminOverviewResponse = {
   recent_inferences: Array<{ id: string; model: string; provider: string; status: string; customer_charge: number; provider_cost: number; created_at: string }>;
 };
 
-const apiBase = (window as Window & { API_BASE_URL?: string }).API_BASE_URL || "http://localhost:8080";
+const apiBase =
+  (window as Window & { API_BASE_URL?: string }).API_BASE_URL ||
+  `${window.location.protocol}//${window.location.hostname}:8080`;
 const buyCreditRatio = 100;
 let currentProjectID = "";
 let currentAPIKey = "";
