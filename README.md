@@ -92,6 +92,19 @@ Run the local E2E smoke after the backend, frontend, and database are up:
 scripts/demo-smoke.sh dev
 ```
 
+Preview conversation and standalone-asset retention cleanup without deleting
+anything:
+
+```sh
+scripts/cleanup-retention.sh dev --dry-run
+```
+
+Apply the configured `conversation_days` and `asset_days` project policies:
+
+```sh
+scripts/cleanup-retention.sh dev --apply
+```
+
 The smoke creates a mock payment purchase, creates a project API key, generates a mock image artifact, downloads it through the local mock S3 endpoint, and verifies the database row.
 
 Redis is optional in Phase 1. The default Docker Compose stack runs with PostgreSQL only. To start Redis as well for future cache/rate-limit experiments:

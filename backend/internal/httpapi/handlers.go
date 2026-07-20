@@ -107,20 +107,30 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credentials"})
 		return
 	}
+	loginLimitKey := strings.ToLower(req.Username) + "|" + requestIP(r)
+	if retryAfter, allowed := a.checkLoginAllowed(loginLimitKey); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+		writeJSON(w, http.StatusTooManyRequests, response{"error": "login_temporarily_locked"})
+		return
+	}
 	email, storedHash, err := a.lookupLoginIdentity(r.Context(), req.Username)
 	if err != nil {
+		a.recordLoginFailure(loginLimitKey)
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
 	if storedHash == "" || storedHash != hashPassword(req.Password) {
+		a.recordLoginFailure(loginLimitKey)
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
 	login, err := a.loginByEmail(r.Context(), email)
 	if err != nil {
+		a.recordLoginFailure(loginLimitKey)
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
+	a.clearLoginFailures(loginLimitKey)
 	writeJSON(w, http.StatusOK, login)
 }
 
@@ -343,7 +353,8 @@ func authUserResponse(id, email, name, userType, companyID, companyName string) 
 
 func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, ''), coalesce(mp.default_parameters, '{}')
+		select m.id, m.slug, m.name, p.name, m.modality, m.status, coalesce(mp.slug, ''), coalesce(mp.name, ''), coalesce(mp.default_parameters, '{}'),
+			m.context_window, m.capabilities, m.metadata, m.created_at
 		from sys_models m
 		join sys_providers p on p.id = m.provider_id
 		left join sys_model_profiles mp on mp.model_id = m.id and mp.status = 'public'
@@ -355,12 +366,14 @@ func (a *App) models(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, slug, name, provider, modality, status, profileSlug, profileName, defaultParameters string
-		if err := rows.Scan(&id, &slug, &name, &provider, &modality, &status, &profileSlug, &profileName, &defaultParameters); err != nil {
+		var id, slug, name, provider, modality, status, profileSlug, profileName, defaultParameters, capabilities, metadata string
+		var contextWindow int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &slug, &name, &provider, &modality, &status, &profileSlug, &profileName, &defaultParameters, &contextWindow, &capabilities, &metadata, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "slug": slug, "name": name, "provider": provider, "modality": modality, "status": status, "profile_slug": profileSlug, "profile_name": profileName, "default_parameters": defaultParameters})
+		items = append(items, response{"id": id, "slug": slug, "name": name, "provider": provider, "modality": modality, "status": status, "profile_slug": profileSlug, "profile_name": profileName, "default_parameters": defaultParameters, "context_window": contextWindow, "capabilities": capabilities, "metadata": metadata, "created_at": createdAt})
 	}
 	writeJSON(w, http.StatusOK, response{"models": items})
 }
@@ -1780,6 +1793,10 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_upload_request"})
 		return
 	}
+	if req.SizeBytes <= 0 || req.SizeBytes > 25*1024*1024 {
+		writeJSON(w, http.StatusRequestEntityTooLarge, response{"error": "upload_size_not_allowed", "max_size_bytes": 25 * 1024 * 1024})
+		return
+	}
 	contentType := strings.TrimSpace(req.ContentType)
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -1848,6 +1865,14 @@ func (a *App) mockS3Object(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPut:
+		if r.ContentLength > 25*1024*1024 {
+			writeJSON(w, http.StatusRequestEntityTooLarge, response{"error": "upload_too_large", "max_size_bytes": 25 * 1024 * 1024})
+			return
+		}
+		if contentType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]); assetTypeForContentType(contentType) == "" {
+			writeJSON(w, http.StatusUnsupportedMediaType, response{"error": "unsupported_upload_type"})
+			return
+		}
 		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
@@ -1857,8 +1882,13 @@ func (a *App) mockS3Object(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		size, copyErr := io.Copy(file, r.Body)
+		size, copyErr := io.Copy(file, io.LimitReader(r.Body, 25*1024*1024+1))
 		closeErr := file.Close()
+		if size > 25*1024*1024 {
+			_ = os.Remove(localPath)
+			writeJSON(w, http.StatusRequestEntityTooLarge, response{"error": "upload_too_large", "max_size_bytes": 25 * 1024 * 1024})
+			return
+		}
 		if copyErr != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": copyErr.Error()})
 			return
@@ -2888,17 +2918,17 @@ func messageRoleRank(role string) int {
 }
 
 func assetTypeForContentType(contentType string) string {
-	lower := strings.ToLower(contentType)
-	if strings.HasPrefix(lower, "image/") {
+	lower := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch lower {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
 		return "upload_image"
-	}
-	if strings.HasPrefix(lower, "audio/") {
+	case "audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/mp4":
 		return "upload_audio"
-	}
-	if strings.HasPrefix(lower, "video/") {
+	case "video/mp4", "video/webm", "video/quicktime":
 		return "upload_video"
+	default:
+		return ""
 	}
-	return ""
 }
 
 func sanitizeFilename(filename string) string {

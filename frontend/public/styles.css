@@ -1362,6 +1362,19 @@ audio.sample-media.compact {
   font-size: 0.88rem;
 }
 
+.preset-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.preset-toolbar select {
+  min-width: 200px;
+  flex: 1 1 220px;
+}
+
 .output-param-field {
   display: grid;
   gap: 6px;
@@ -1479,6 +1492,19 @@ pre {
 .workspace-row p {
   margin: 0;
   font-size: 13px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 10px;
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.row-actions [role="button"]:hover,
+.row-actions [role="button"]:focus {
+  text-decoration: underline;
 }
 
 .artifact-row {

@@ -110,3 +110,22 @@ The requested MVP work delivered in the current implementation includes:
   backend debug service are running.
 - [ ] Visually verify the deployed debug UI. Blocked while
   `http://100.98.0.64:3000` is unreachable.
+
+## Independent feature batch
+
+- [x] Add a 25 MB upload limit and explicit safe image/audio/video MIME list.
+- [x] Add login throttling with a 15-minute lock after five failed attempts.
+- [x] Add conversation rename, permanent delete, and JSON export.
+- [x] Add asset deletion with attachment, extraction, and local-file cleanup.
+- [x] Add organization invitation acceptance with email verification.
+- [x] Add project prompt presets for model, prompt, and output parameters.
+- [x] Add Prometheus-style request, error, and latency metrics at `/metrics`.
+- [x] Add response request IDs and structured success/rejection/failure logs.
+- [x] Add catalog sorting by name, newest, cheapest, provider, and modality.
+- [x] Add context window, lifecycle, added date, capabilities, and stored
+  descriptions to model details.
+- [x] Add dry-run/apply retention cleanup for expired conversations, assets,
+  related rows, and local objects.
+- [x] Add backend coverage for organization invitations and roles, invitation
+  acceptance, refunds, metrics, throttling, upload rejection, presets,
+  conversation rename, and asset deletion.

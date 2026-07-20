@@ -16,6 +16,56 @@ type requestWindow struct {
 	count   int64
 }
 
+type loginAttemptWindow struct {
+	started     time.Time
+	failures    int
+	lockedUntil time.Time
+}
+
+func (a *App) checkLoginAllowed(key string) (time.Duration, bool) {
+	now := time.Now()
+	a.loginLimitMu.Lock()
+	defer a.loginLimitMu.Unlock()
+	if a.loginLimits == nil {
+		a.loginLimits = map[string]*loginAttemptWindow{}
+	}
+	window := a.loginLimits[key]
+	if window == nil {
+		return 0, true
+	}
+	if window.lockedUntil.After(now) {
+		return time.Until(window.lockedUntil), false
+	}
+	if now.Sub(window.started) >= 15*time.Minute {
+		delete(a.loginLimits, key)
+	}
+	return 0, true
+}
+
+func (a *App) recordLoginFailure(key string) {
+	now := time.Now()
+	a.loginLimitMu.Lock()
+	defer a.loginLimitMu.Unlock()
+	if a.loginLimits == nil {
+		a.loginLimits = map[string]*loginAttemptWindow{}
+	}
+	window := a.loginLimits[key]
+	if window == nil || now.Sub(window.started) >= 15*time.Minute {
+		window = &loginAttemptWindow{started: now}
+		a.loginLimits[key] = window
+	}
+	window.failures++
+	if window.failures >= 5 {
+		window.lockedUntil = now.Add(15 * time.Minute)
+	}
+}
+
+func (a *App) clearLoginFailures(key string) {
+	a.loginLimitMu.Lock()
+	defer a.loginLimitMu.Unlock()
+	delete(a.loginLimits, key)
+}
+
 var organizationRoles = map[string]bool{
 	"owner": true, "admin": true, "billing_admin": true, "developer": true,
 	"analyst": true, "read_only": true, "provider_admin": true,
@@ -178,6 +228,48 @@ func (a *App) createOrganizationInvitation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, response{"id": id, "invitation_token": rawToken, "expires_in": 604800})
+}
+
+func (a *App) acceptOrganizationInvitation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token  string `json:"token"`
+		UserID string `json:"user_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || strings.TrimSpace(req.Token) == "" || strings.TrimSpace(req.UserID) == "" {
+		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_invitation_acceptance"})
+		return
+	}
+	tx, err := a.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, 500, response{"error": err.Error()})
+		return
+	}
+	defer tx.Rollback()
+	var invitationID, organizationID, email, role string
+	var expiresAt time.Time
+	err = tx.QueryRowContext(r.Context(), `select id, organization_id, email, role, expires_at from user_organization_invitations where token_hash = $1 and status = 'pending' for update`, hashAPIKey(req.Token)).Scan(&invitationID, &organizationID, &email, &role, &expiresAt)
+	if err != nil || !expiresAt.After(time.Now()) {
+		writeJSON(w, http.StatusGone, response{"error": "invitation_invalid_or_expired"})
+		return
+	}
+	var userEmail string
+	if err := tx.QueryRowContext(r.Context(), `select email from sys_users where id = $1`, req.UserID).Scan(&userEmail); err != nil || !strings.EqualFold(userEmail, email) {
+		writeJSON(w, http.StatusForbidden, response{"error": "invitation_email_mismatch"})
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `insert into sys_memberships(id, user_id, organization_id, role) values($1,$2,$3,$4) on conflict (user_id, organization_id) do update set role = excluded.role`, "membership_"+randomHex(8), req.UserID, organizationID, role); err != nil {
+		writeJSON(w, 500, response{"error": err.Error()})
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `update user_organization_invitations set status = 'accepted', accepted_at = current_timestamp where id = $1`, invitationID); err != nil {
+		writeJSON(w, 500, response{"error": err.Error()})
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		writeJSON(w, 500, response{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, response{"status": "accepted", "organization_id": organizationID, "role": role})
 }
 
 func (a *App) rotateAPIKey(w http.ResponseWriter, r *http.Request) {

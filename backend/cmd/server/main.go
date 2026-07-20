@@ -2,12 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,7 +47,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           requestIDMiddleware(loggingMiddleware(logger, app.Routes())),
+		Handler:           app.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -62,54 +58,10 @@ func main() {
 	}
 }
 
-func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		logger.Info("http_request",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rec.status,
-			"duration_ms", time.Since(start).Milliseconds(),
-			"request_id", r.Header.Get("X-Request-ID"),
-		)
-	})
-}
-
-func requestIDMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get("X-Request-ID")
-		if requestID == "" {
-			sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", time.Now().UnixNano(), r.RemoteAddr)))
-			requestID = hex.EncodeToString(sum[:])[:16]
-		}
-		w.Header().Set("X-Request-ID", requestID)
-		r.Header.Set("X-Request-ID", requestID)
-		next.ServeHTTP(w, r)
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
 type redisPinger struct {
 	client *redis.Client
 }
 
 func (p redisPinger) Ping(ctx context.Context) error {
 	return p.client.Ping(ctx).Err()
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }

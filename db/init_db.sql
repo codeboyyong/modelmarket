@@ -574,6 +574,20 @@ CREATE TABLE IF NOT EXISTS user_routing_policies (
   CONSTRAINT fk_routing_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
 );
 
+-- User table: reusable workbench prompt and parameter presets per project.
+CREATE TABLE IF NOT EXISTS user_prompt_presets (
+  id VARCHAR(64) PRIMARY KEY,
+  project_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  model_slug VARCHAR(255) NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  parameters VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_prompt_presets_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT uq_prompt_preset_project_name UNIQUE (project_id, name)
+);
+
 -- User table: project spending limits and budget guardrails.
 CREATE TABLE IF NOT EXISTS user_budget_policies (
   id VARCHAR(64) PRIMARY KEY,

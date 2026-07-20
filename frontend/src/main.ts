@@ -77,6 +77,10 @@ type Model = {
   profile_name: string;
   default_parameters?: string;
   status?: string;
+  context_window?: number;
+  capabilities?: string;
+  metadata?: string;
+  created_at?: string;
 };
 
 type OutputParameterSchema = {
@@ -236,6 +240,8 @@ type Payment = {
   created_at: string;
 };
 
+type PromptPreset = { id: string; name: string; model: string; prompt: string; parameters: Record<string, string | number | boolean> };
+
 type AdminOverviewResponse = {
   configs: Array<{ key: string; value: string; description: string }>;
   provider_credentials: Array<{ provider: string; provider_slug: string; purpose: string; credential_ref: string; configured: boolean; masked_value: string; key_count: number; status: string }>;
@@ -260,6 +266,7 @@ let pricingRows: PricingRow[] = [];
 let signupMode = false;
 let changePasswordMode = false;
 let selectedModality = "all";
+let catalogSort = "name";
 let selectedPricingModality = "all";
 let workbenchModality = "chat";
 let selectedWorkbenchModel = "";
@@ -273,6 +280,7 @@ let promptSending = false;
 let outputParamsOpen = false;
 let activeAdminView = "overview";
 let outputParameterValues: Record<string, Record<string, string | number | boolean>> = {};
+let promptPresets: PromptPreset[] = [];
 const tabs = new Set(["home", "models", "model-detail", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -578,17 +586,21 @@ async function loadWorkspace() {
     branches = [];
     assets = [];
     currentBranchID = "";
+	promptPresets = [];
     renderWorkspaceLists();
     renderBranches();
+	renderPromptPresets();
     return;
   }
   try {
-    const [conversationData, assetData] = await Promise.all([
+    const [conversationData, assetData, presetData] = await Promise.all([
       request<{ conversations: Conversation[] }>(`/api/v1/conversations?project_id=${encodeURIComponent(currentProjectID)}`),
-      request<{ assets: WorkspaceAsset[] }>(`/api/v1/assets?project_id=${encodeURIComponent(currentProjectID)}`)
+	  request<{ assets: WorkspaceAsset[] }>(`/api/v1/assets?project_id=${encodeURIComponent(currentProjectID)}`),
+	  request<{ presets: PromptPreset[] }>(`/api/v1/prompt-presets?project_id=${encodeURIComponent(currentProjectID)}`)
     ]);
     conversations = conversationData.conversations;
     assets = assetData.assets;
+	promptPresets = presetData.presets || [];
     if (!conversations.some((conversation) => conversation.id === currentConversationID)) {
       currentConversationID = conversations[0]?.id || "";
       currentBranchID = "";
@@ -597,12 +609,54 @@ async function loadWorkspace() {
     conversations = [];
     branches = [];
     assets = [];
+	promptPresets = [];
     currentConversationID = "";
     currentBranchID = "";
   }
   renderWorkspaceLists();
+	renderPromptPresets();
   await loadConversationBranches();
   await loadConversationMessages();
+}
+
+function renderPromptPresets() {
+	const select = $("promptPresetSelect") as HTMLSelectElement;
+	const selectedID = select.value;
+	select.innerHTML = `<option value="">No saved preset</option>${promptPresets.map((preset) => `<option value="${escapeHTML(preset.id)}">${escapeHTML(preset.name)}</option>`).join("")}`;
+	if (promptPresets.some((preset) => preset.id === selectedID)) select.value = selectedID;
+}
+
+async function savePromptPreset() {
+	if (!currentProjectID) { setPromptPresetMessage("Select a project first.", true); return; }
+	const name = window.prompt("Preset name");
+	if (!name?.trim()) return;
+	setPromptPresetMessage("Saving preset...");
+	try {
+		await request("/api/v1/prompt-presets", { method: "POST", body: JSON.stringify({ project_id: currentProjectID, name: name.trim(), model: selectedWorkbenchModelKey(), prompt: ($("prompt") as HTMLTextAreaElement).value, parameters: currentOutputParameters() }) });
+		const data = await request<{ presets: PromptPreset[] }>(`/api/v1/prompt-presets?project_id=${encodeURIComponent(currentProjectID)}`);
+		promptPresets = data.presets || []; renderPromptPresets(); setPromptPresetMessage("Preset saved.");
+	} catch (error) { setPromptPresetMessage(error instanceof Error ? error.message : String(error), true); }
+}
+
+function applyPromptPreset(id: string) {
+	const preset = promptPresets.find((item) => item.id === id);
+	if (!preset) return;
+	selectedWorkbenchModel = preset.model;
+	outputParameterValues[preset.model] = { ...preset.parameters };
+	($("prompt") as HTMLTextAreaElement).value = preset.prompt;
+	renderSelectedWorkbenchModel(); renderWorkbenchModelPicker(); renderOutputParameterControls(); setPromptPresetMessage(`Applied ${preset.name}.`);
+}
+
+async function deletePromptPreset() {
+	const id = ($("promptPresetSelect") as HTMLSelectElement).value;
+	if (!id) { setPromptPresetMessage("Select a preset to delete.", true); return; }
+	await request(`/api/v1/prompt-presets/${encodeURIComponent(id)}`, { method: "DELETE" });
+	promptPresets = promptPresets.filter((preset) => preset.id !== id); renderPromptPresets(); setPromptPresetMessage("Preset deleted.");
+}
+
+function setPromptPresetMessage(message: string, isError = false) {
+	$("promptPresetMessage").textContent = message;
+	$("promptPresetMessage").classList.toggle("error", isError);
 }
 
 function renderWorkspaceLists() {
@@ -614,6 +668,7 @@ function renderWorkspaceLists() {
     visibleConversations
       .map((conversation) => `<button class="workspace-row${conversation.id === currentConversationID ? " active" : ""}" type="button" data-conversation-id="${escapeHTML(conversation.id)}">
         <span><strong>${escapeHTML(conversation.title)}</strong><small>${conversation.message_count} messages / ${escapeHTML(conversation.status)}</small></span>
+		<span class="row-actions"><span role="button" tabindex="0" data-conversation-action="rename" data-action-id="${escapeHTML(conversation.id)}">Rename</span><span role="button" tabindex="0" data-conversation-action="export" data-action-id="${escapeHTML(conversation.id)}">Export</span><span role="button" tabindex="0" data-conversation-action="delete" data-action-id="${escapeHTML(conversation.id)}">Delete</span></span>
       </button>`)
       .join("") || "<div class=\"empty-state\">No conversations yet.</div>";
   $("conversations").classList.toggle("hidden", !conversationPickerOpen);
@@ -632,10 +687,34 @@ function renderWorkspaceLists() {
         <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
         ${preview}
         <a class="artifact-link" href="${escapeHTML(href)}" target="_blank" rel="noreferrer">${escapeHTML(href || asset.storage_path)}</a>
+		<button class="ghost mini-button" type="button" data-delete-asset="${escapeHTML(asset.id)}">Delete asset</button>
       </div>`;
       })
       .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
   renderSelectedConversation();
+}
+
+async function handleConversationAction(action: string, id: string) {
+	const conversation = conversations.find((item) => item.id === id);
+	if (!conversation) return;
+	if (action === "export") { window.open(`${apiBase}/api/v1/conversations/${encodeURIComponent(id)}/export`, "_blank", "noopener"); return; }
+	if (action === "rename") {
+		const title = window.prompt("Conversation title", conversation.title);
+		if (!title?.trim()) return;
+		await request(`/api/v1/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title: title.trim() }) });
+		conversation.title = title.trim(); renderWorkspaceLists(); return;
+	}
+	if (action === "delete" && window.confirm(`Delete “${conversation.title}” and its saved assets?`)) {
+		await request(`/api/v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+		if (currentConversationID === id) { currentConversationID = ""; currentBranchID = ""; }
+		await loadWorkspace();
+	}
+}
+
+async function deleteWorkspaceAsset(id: string) {
+	if (!window.confirm("Delete this asset permanently?")) return;
+	await request(`/api/v1/assets/${encodeURIComponent(id)}`, { method: "DELETE" });
+	assets = assets.filter((asset) => asset.id !== id); renderWorkspaceLists();
 }
 
 function artifactTransferLabel(asset: WorkspaceAsset) {
@@ -832,6 +911,12 @@ function renderWorkbenchModelPicker() {
     const matchesModality = model.modality === workbenchModality;
     const matchesQuery = [model.name, model.slug, model.provider, model.profile_name].join(" ").toLowerCase().includes(query);
     return matchesModality && matchesQuery;
+  }).sort((a, b) => {
+    if (catalogSort === "newest") return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    if (catalogSort === "cheapest") return modelPriceValue(a) - modelPriceValue(b);
+    if (catalogSort === "provider") return a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
+    if (catalogSort === "modality") return a.modality.localeCompare(b.modality) || a.name.localeCompare(b.name);
+    return a.name.localeCompare(b.name);
   });
   $("workbenchModelList").innerHTML =
     visible
@@ -844,6 +929,11 @@ function renderWorkbenchModelPicker() {
       })
       .join("") || "<div class=\"empty-state\">No ${escapeHTML(workbenchModality)} models match the filter.</div>";
   $("workbenchModelList").classList.toggle("hidden", !workbenchPickerOpen);
+}
+
+function modelPriceValue(model: Model) {
+  const prices = pricingRows.filter((row) => row.model_slug === model.slug && row.status === "active").map((row) => Number(row.price));
+  return prices.length ? Math.min(...prices) : Number.MAX_SAFE_INTEGER;
 }
 
 function renderSelectedWorkbenchModel() {
@@ -908,8 +998,8 @@ function currentOutputParameters() {
 function renderOutputParameterControls() {
   const schema = outputParameterSchema();
   const button = $("outputParamsButton") as HTMLButtonElement;
-  button.classList.toggle("hidden", schema.length === 0);
-  $("outputParamsPanel").classList.toggle("hidden", !outputParamsOpen || schema.length === 0);
+	button.classList.toggle("hidden", !selectedWorkbenchModelRecord());
+	$("outputParamsPanel").classList.toggle("hidden", !outputParamsOpen);
   const selected = selectedWorkbenchModelRecord();
   $("outputParamsTitle").textContent = selected ? `${formatPriceType(selected.modality)} output` : "Output parameters";
   $("outputParamsSummary").textContent = compactParameterSummary(currentOutputParameters()) || "Use the selected profile defaults.";
@@ -1071,6 +1161,9 @@ function showModelDetail(slug: string) {
 
 function renderModelDetail(model: Model) {
   const price = priceFor(model);
+	const metadata = modelRecord(model.metadata);
+	const metadataDescription = typeof metadata.description === "string" ? metadata.description : descriptionFor(model);
+	const capabilities = modelCapabilityLabels(model);
   const providerSlug = model.slug.includes("/") ? model.slug.split("/")[0] : model.provider.toLowerCase().replaceAll(" ", "-");
   const modelName = model.slug.includes("/") ? model.slug.split("/").slice(1).join("/") : model.slug;
   return `<div class="detail-hero">
@@ -1078,7 +1171,7 @@ function renderModelDetail(model: Model) {
       <p class="eyebrow">${escapeHTML(model.provider)}</p>
       <h2>${escapeHTML(model.name)}</h2>
       <p class="detail-slug">${escapeHTML(providerSlug)} / ${escapeHTML(modelName)}</p>
-      <p>${escapeHTML(descriptionFor(model))}</p>
+	  <p>${escapeHTML(metadataDescription)}</p>
       <div class="detail-actions">
         <button type="button" data-tab="workbench">Playground</button>
       </div>
@@ -1087,33 +1180,42 @@ function renderModelDetail(model: Model) {
       <div><strong>${escapeHTML(model.modality)}</strong><small>Modality</small></div>
       <div><strong>${escapeHTML(price)}</strong><small>Price</small></div>
       <div><strong>${escapeHTML(model.status || "public")}</strong><small>Status</small></div>
+	  <div><strong>${model.context_window ? Number(model.context_window).toLocaleString() : "-"}</strong><small>Context window</small></div>
+	  <div><strong>${model.created_at ? escapeHTML(new Date(model.created_at).toLocaleDateString()) : "-"}</strong><small>Added</small></div>
     </aside>
   </div>
   <div class="detail-tabs" aria-label="Model detail sections">
     <span>Overview</span>
     <span>Providers</span>
-    <span>Performance</span>
-    <span>Benchmarks</span>
-    <span>Activity</span>
-    <span>Uptime</span>
+	<span>Parameters</span>
   </div>
   <div class="detail-grid">
     <article class="detail-panel">
       <h3>Overview</h3>
       <p>${escapeHTML(model.profile_name || "Default profile")} is available through the marketplace catalog and can be used directly in the workbench.</p>
-      <div class="tag-row">${capabilityTags(model).map((tag) => `<span class="tag">${escapeHTML(tag)}</span>`).join("")}</div>
+	  <div class="tag-row">${[...capabilityTags(model), ...capabilities].slice(0, 10).map((tag) => `<span class="tag">${escapeHTML(tag)}</span>`).join("")}</div>
     </article>
     <article class="detail-panel">
       <h3>Provider routing</h3>
-      <p>Requests route through ${escapeHTML(model.provider)} metadata. Fallback routing, uptime scoring, and provider comparisons are mocked for this detail page.</p>
+	  <p>Workbench requests use the active ${escapeHTML(model.provider)} configuration with tracked pricing and availability metadata.</p>
       <div class="meta-row"><span><strong>Provider</strong><small>Catalog source</small></span><span>${escapeHTML(model.provider)}</span></div>
       <div class="meta-row"><span><strong>Profile</strong><small>Default configuration</small></span><span>${escapeHTML(model.profile_slug || "default")}</span></div>
+	  <div class="meta-row"><span><strong>Lifecycle</strong><small>Catalog visibility</small></span><span>${escapeHTML(model.status || "public")}</span></div>
     </article>
     <article class="detail-panel">
       <h3>Supported parameters</h3>
       ${renderSupportedParameters(model)}
     </article>
   </div>`;
+}
+
+function modelRecord(value?: string): Record<string, unknown> {
+	try { return JSON.parse(value || "{}") as Record<string, unknown>; } catch { return {}; }
+}
+
+function modelCapabilityLabels(model: Model) {
+	const parsed = modelRecord(model.capabilities);
+	return Object.entries(parsed).filter(([, enabled]) => enabled === true || typeof enabled === "string" || typeof enabled === "number").map(([name]) => formatUserType(name)).slice(0, 6);
 }
 
 function descriptionFor(model: Model) {
@@ -1199,6 +1301,7 @@ async function sendPrompt() {
 }
 
 async function uploadAssetFile(file: File) {
+	if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw new Error("Files must be between 1 byte and 25 MB.");
   if (!currentProjectID) throw new Error("Select or create a project first.");
   const data = await request<UploadIntentResponse>("/api/v1/assets/upload-intent", {
     method: "POST",
@@ -1926,6 +2029,7 @@ async function loadPricing() {
     }));
   }
   renderPricing();
+	renderModels();
 }
 
 function formatPrice(value: number, unit: string, currency: string) {
@@ -2399,6 +2503,7 @@ function accountAction(action: string) {
     openProfile();
     return;
   }
+	if (action === "accept-invitation") { void acceptInvitation(); return; }
   if (action === "buy-credit") {
     openBuyCredit();
     return;
@@ -2411,6 +2516,19 @@ function accountAction(action: string) {
     return;
   }
   setActiveTab(action);
+}
+
+async function acceptInvitation() {
+	const user = getStoredUser();
+	if (!user) return;
+	const token = window.prompt("Invitation token");
+	if (!token?.trim()) return;
+	try {
+		const result = await request<{ organization_id: string; role: string }>("/api/v1/organization/invitations/accept", { method: "POST", body: JSON.stringify({ token: token.trim(), user_id: user.id }) });
+		localStorage.setItem("organizationID", result.organization_id);
+		window.alert(`Invitation accepted with ${formatUserType(result.role)} access.`);
+		await loadProjects();
+	} catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
 }
 
 function applyTheme(mode: string) {
@@ -2505,6 +2623,8 @@ $("projects").addEventListener("click", (event) => {
   loadWorkspace().catch(showError);
 });
 $("conversations").addEventListener("click", (event) => {
+	const action = (event.target as HTMLElement).closest<HTMLElement>("[data-conversation-action]");
+	if (action) { event.preventDefault(); event.stopPropagation(); handleConversationAction(action.dataset.conversationAction || "", action.dataset.actionId || "").catch(showError); return; }
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-conversation-id]");
   if (!button) return;
   currentConversationID = button.dataset.conversationId || currentConversationID;
@@ -2513,6 +2633,10 @@ $("conversations").addEventListener("click", (event) => {
   loadConversationBranches()
     .then(loadConversationMessages)
     .catch(showError);
+});
+$("artifacts").addEventListener("click", (event) => {
+	const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-delete-asset]");
+	if (button) { event.preventDefault(); deleteWorkspaceAsset(button.dataset.deleteAsset || "").catch(showError); }
 });
 $("branchSelect").addEventListener("change", (event) => {
   currentBranchID = (event.target as HTMLSelectElement).value;
@@ -2549,6 +2673,7 @@ $("modelDetailContent").addEventListener("click", async (event) => {
   if (copyButton) await navigator.clipboard?.writeText(copyButton.dataset.copyModel || "");
 });
 $("modelSearch").addEventListener("input", renderModels);
+$("catalogSort").addEventListener("change", (event) => { catalogSort = (event.target as HTMLSelectElement).value; renderModels(); });
 $("pricingSearch").addEventListener("input", renderPricing);
 $("creditRange").addEventListener("change", renderCreditAnalytics);
 $("userUsageRange").addEventListener("change", renderUserCreditUsage);
@@ -2605,6 +2730,9 @@ $("closeOutputParams").addEventListener("click", () => {
   outputParamsOpen = false;
   renderOutputParameterControls();
 });
+$("savePromptPreset").addEventListener("click", () => savePromptPreset().catch(showError));
+$("deletePromptPreset").addEventListener("click", () => deletePromptPreset().catch(showError));
+$("promptPresetSelect").addEventListener("change", (event) => applyPromptPreset((event.target as HTMLSelectElement).value));
 $("outputParamsGrid").addEventListener("input", (event) => {
   const target = event.target as HTMLInputElement | HTMLSelectElement;
   if (target.dataset.outputParam) updateOutputParameter(target);
