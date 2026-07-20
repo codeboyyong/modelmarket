@@ -312,7 +312,7 @@ func TestCreateAPIKey(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectExec("insert into user_api_keys").
-		WithArgs(sqlmock.AnyArg(), "project-1", "Test key", sqlmock.AnyArg(), sqlmock.AnyArg(), "models:read,chat:create").
+		WithArgs(sqlmock.AnyArg(), "project-1", "Test key", sqlmock.AnyArg(), sqlmock.AnyArg(), "models:read,chat:create", nil, "dev", int64(60), nil, "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/api-keys", bytes.NewBufferString(`{"project_id":"project-1","name":"Test key"}`))
@@ -323,7 +323,7 @@ func TestCreateAPIKey(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
@@ -354,9 +354,10 @@ func TestChatCompletions(t *testing.T) {
 	defer cleanup()
 
 	apiKey := "mk_test"
-	mock.ExpectQuery("select project_id from user_api_keys").
+	mock.ExpectQuery("select project_id, id, scopes").
 		WithArgs(hashAPIKey(apiKey)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"project_id", "id", "scopes", "environment", "allowed_ips", "expires_at", "rate_limit_per_minute", "budget_credits"}).AddRow("project-1", "key-1", "models:read,chat:create", "dev", "", sql.NullTime{}, int64(60), nil))
+	mock.ExpectExec("update user_api_keys set last_used_at").WithArgs("key-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select r.id, r.route_group, m.slug").
 		WithArgs("default", "mock-chat").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "modality", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
@@ -379,6 +380,11 @@ func TestChatCompletions(t *testing.T) {
 	mock.ExpectExec("insert into user_usage_events").
 		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "mock-chat", "mock-provider", "chat_completion", 1, sqlmock.AnyArg(), int64(1), int64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectBegin()
+	mock.ExpectQuery("select id, paid_credits, promotional_credits").WithArgs("project-1").WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", int64(100), int64(0)))
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(0), int64(1), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-1), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -436,9 +442,10 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 	})}
 
 	apiKey := "mk_test"
-	mock.ExpectQuery("select project_id from user_api_keys").
+	mock.ExpectQuery("select project_id, id, scopes").
 		WithArgs(hashAPIKey(apiKey)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"project_id", "id", "scopes", "environment", "allowed_ips", "expires_at", "rate_limit_per_minute", "budget_credits"}).AddRow("project-1", "key-1", "models:read,chat:create", "dev", "", sql.NullTime{}, int64(60), nil))
+	mock.ExpectExec("update user_api_keys set last_used_at").WithArgs("key-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select r.id, r.route_group, m.slug").
 		WithArgs("default", "gemini-2-5-flash-free-default").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "route_group", "slug", "modality", "coalesce", "upstream_model_id", "id", "slug", "id", "name", "channel_type", "coalesce", "coalesce", "priority", "weight", "coalesce"}).
@@ -709,10 +716,10 @@ func TestAPIKeys(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	mock.ExpectQuery("select id, name, prefix, status").
+	mock.ExpectQuery("select id, name, prefix, scopes, status").
 		WithArgs("project-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "prefix", "status", "created_at", "revoked_at"}).
-			AddRow("key-1", "Test key", "mk_123", "active", now, sql.NullTime{}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "prefix", "scopes", "status", "environment", "rate_limit_per_minute", "budget_credits", "allowed_ips", "created_at", "revoked_at", "expires_at", "last_used_at"}).
+			AddRow("key-1", "Test key", "mk_123", "models:read,chat:create", "active", "dev", int64(60), nil, "", now, sql.NullTime{}, sql.NullTime{}, sql.NullTime{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys?project_id=project-1", nil)
 	rec := httptest.NewRecorder()

@@ -23,6 +23,8 @@ type App struct {
 
 	credentialPoolMu   sync.Mutex
 	credentialPoolNext map[string]uint64
+	rateLimitMu        sync.Mutex
+	rateLimits         map[string]*requestWindow
 }
 
 func (a *App) Routes() http.Handler {
@@ -57,6 +59,13 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/api-keys", a.apiKeys)
 	mux.HandleFunc("POST /api/v1/api-keys", a.createAPIKey)
 	mux.HandleFunc("DELETE /api/v1/api-keys/", a.revokeAPIKey)
+	mux.HandleFunc("POST /api/v1/api-keys/rotate", a.rotateAPIKey)
+	mux.HandleFunc("GET /api/v1/organization/members", a.organizationMembers)
+	mux.HandleFunc("POST /api/v1/organization/members", a.updateOrganizationMember)
+	mux.HandleFunc("GET /api/v1/organization/invitations", a.organizationInvitations)
+	mux.HandleFunc("POST /api/v1/organization/invitations", a.createOrganizationInvitation)
+	mux.HandleFunc("GET /api/v1/payments", a.payments)
+	mux.HandleFunc("POST /api/v1/payments/refund", a.refundPayment)
 	mux.HandleFunc("POST /api/v1/chat/completions", a.chatCompletions)
 	return cors(mux)
 }
@@ -64,7 +73,7 @@ func (a *App) Routes() http.Handler {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-Environment, X-Forwarded-For")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

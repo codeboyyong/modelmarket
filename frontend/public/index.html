@@ -253,14 +253,14 @@
 
       <section class="hero tab-panel active" id="home" data-panel="home">
         <div class="hero-copy">
-          <p class="eyebrow">Unified AI model gateway</p>
-          <h1>One API for image, audio, and video AI workflows.</h1>
+          <p class="eyebrow">Unified AI creative workspace</p>
+          <h1>One workspace for image, audio, and video AI workflows.</h1>
           <p class="hero-text">
-            Browse providers, compare model capabilities, route requests through a workbench, and manage credits from one developer console.
+            Browse providers, compare model capabilities, create in the workbench, and manage credits from one account.
           </p>
           <div class="hero-actions">
             <button class="button-link" type="button" data-tab="models">Explore Models</button>
-            <button class="secondary-link" type="button" data-tab="api">View API Console</button>
+            <button class="secondary-link" type="button" data-tab="workbench">Open Workbench</button>
           </div>
           <div class="stats-strip" id="summary">
             <span>Loading platform stats...</span>
@@ -271,7 +271,7 @@
       <section class="model-ticker tab-panel active" aria-label="Supported model families" data-panel="home">
         <span>Mock Chat</span>
         <span>Mock Creative</span>
-        <span>OpenAI Placeholder</span>
+        <span>Multimodal Chat</span>
         <span>Image Generation</span>
         <span>Streaming</span>
         <span>Async Jobs</span>
@@ -307,44 +307,6 @@
       <section class="model-detail tab-panel" id="modelDetail" data-panel="model-detail">
         <button class="ghost detail-back" id="backToModels" type="button">Back to Models</button>
         <div id="modelDetailContent" class="model-detail-content"></div>
-      </section>
-
-      <section class="tab-panel" id="api" data-panel="api">
-        <div class="section-heading">
-          <p class="eyebrow">API console</p>
-          <h2>Build against one gateway contract</h2>
-          <p>Use one OpenAI-compatible API surface while the backend handles model profiles, provider metadata, usage tracking, and credit charging.</p>
-        </div>
-        <div class="api-console">
-          <pre>{
-  "model": "mock-chat-default",
-  "messages": [
-    { "role": "user", "content": "Explain the platform" }
-  ]
-}</pre>
-          <div>
-            <h3>Current backend mapping</h3>
-            <p><code>POST /api/v1/chat/completions</code> is live for the mock chat provider. Image, video, audio, and file APIs are represented as mock UI components until backend adapters land.</p>
-          </div>
-        </div>
-      </section>
-
-      <section class="product-band tab-panel" data-panel="api">
-        <article>
-          <span class="icon-tile">API</span>
-          <h3>Unified API</h3>
-          <p>OpenAI-compatible request shape for model routing, usage tracking, and credit charging.</p>
-        </article>
-        <article>
-          <span class="icon-tile">SLS</span>
-          <h3>Serverless inference</h3>
-          <p>Mock provider execution now, with provider adapters and retry/fallback routing planned next.</p>
-        </article>
-        <article>
-          <span class="icon-tile">ADM</span>
-          <h3>Metadata manager</h3>
-          <p>Configure providers, model profiles, prompts, parameters, pricing, and policy metadata.</p>
-        </article>
       </section>
 
       <section class="workbench-section tab-panel" id="workbench" data-panel="workbench">
@@ -383,7 +345,7 @@
           </div>
           <div class="chat-window" id="chatTranscript">
             <div class="message user">Explain what this platform does in one sentence.</div>
-            <div class="message assistant">Select a model and send a prompt to call the backend mock chat API.</div>
+            <div class="message assistant">Select a model and send a prompt to start creating in the workbench.</div>
           </div>
           <div class="composer">
             <button class="icon-button upload-button" id="uploadAsset" type="button" title="Upload image, audio, or video" aria-label="Upload image, audio, or video">↑</button>
@@ -596,6 +558,41 @@
               </tbody>
             </table>
           </div>
+          <section class="company-management" aria-labelledby="teamManagementTitle">
+            <div class="workspace-section-head">
+              <div>
+                <p class="eyebrow">Team controls</p>
+                <h3 id="teamManagementTitle">Members and invitations</h3>
+              </div>
+              <button id="refreshCompanyTeam" class="ghost mini-button" type="button">Refresh</button>
+            </div>
+            <p id="companyTeamMessage" class="auth-message" role="status"></p>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead><tr><th>Member</th><th>Role</th><th>Action</th></tr></thead>
+                <tbody id="companyTeamRows"><tr><td colspan="3">No team controls loaded.</td></tr></tbody>
+              </table>
+            </div>
+            <form id="companyInviteForm" class="inline-management-form">
+              <label>Email<input id="companyInviteEmail" type="email" autocomplete="email" required /></label>
+              <label>Role
+                <select id="companyInviteRole">
+                  <option value="developer">Developer</option>
+                  <option value="analyst">Analyst</option>
+                  <option value="read_only">Read only</option>
+                  <option value="billing_admin">Billing admin</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <button type="submit">Create invitation</button>
+            </form>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th></tr></thead>
+                <tbody id="companyInvitationRows"><tr><td colspan="4">No invitations loaded.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
         </article>
         <aside class="admin-panel credit-panel">
           <div class="credit-panel-head">
@@ -760,6 +757,19 @@
               </table>
             </div>
           </section>
+          <section class="chart-section" aria-label="Payment and refund history">
+            <div class="workspace-section-head">
+              <h3>Payments and refunds</h3>
+              <button id="refreshPayments" class="ghost mini-button" type="button">Refresh</button>
+            </div>
+            <p id="paymentHistoryMessage" class="auth-message" role="status"></p>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead><tr><th>Payment</th><th>Amount</th><th>Refunded</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody id="paymentHistoryRows"><tr><td colspan="5">Select a project to load payments.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
         </aside>
       </section>
 
@@ -779,7 +789,7 @@
             </section>
             <section>
               <h2>Status</h2>
-              <p>This page is placeholder content for the demo and can be replaced with real company information later.</p>
+              <p>The local release includes account management, project workspaces, model discovery, credit reporting, and multimodal asset workflows backed by deterministic demo data.</p>
             </section>
           </div>
         </article>

@@ -1188,10 +1188,6 @@ func (a *App) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
 		return
 	}
-	if event.Type != "checkout.session.completed" {
-		writeJSON(w, http.StatusOK, response{"status": "ignored", "event_type": event.Type})
-		return
-	}
 	var data struct {
 		Object struct {
 			ID            string            `json:"id"`
@@ -1204,6 +1200,22 @@ func (a *App) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_session"})
 		return
 	}
+	if event.Type == "checkout.session.expired" || event.Type == "checkout.session.async_payment_failed" {
+		status := "expired"
+		if event.Type == "checkout.session.async_payment_failed" {
+			status = "failed"
+		}
+		if err := a.markStripePurchaseFailed(r.Context(), data.Object.ID, data.Object.Metadata["purchase_id"], status, event.ID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, response{"status": status, "purchase_id": data.Object.Metadata["purchase_id"]})
+		return
+	}
+	if event.Type != "checkout.session.completed" {
+		writeJSON(w, http.StatusOK, response{"status": "ignored", "event_type": event.Type})
+		return
+	}
 	if data.Object.PaymentStatus != "" && data.Object.PaymentStatus != "paid" {
 		writeJSON(w, http.StatusOK, response{"status": "ignored", "payment_status": data.Object.PaymentStatus})
 		return
@@ -1214,6 +1226,25 @@ func (a *App) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *App) markStripePurchaseFailed(ctx context.Context, sessionID, purchaseID, status, eventID string) error {
+	if sessionID == "" || purchaseID == "" {
+		return errors.New("stripe webhook missing purchase metadata")
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	metadata := fmt.Sprintf(`{"stripe_event_id":%q,"checkout_session_id":%q}`, eventID, sessionID)
+	if _, err = tx.ExecContext(ctx, `update user_credit_purchases set status = $1, metadata = $2 where id = $3 and status = 'pending'`, status, metadata, purchaseID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `update user_payments set status = $1, metadata = $2, updated_at = current_timestamp where provider = 'stripe' and provider_payment_id = $3 and status = 'pending'`, status, metadata, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func validStripeSignature(payload []byte, header, secret string, tolerance time.Duration) bool {
@@ -1424,7 +1455,7 @@ func (a *App) projectAvailableCredits(ctx context.Context, projectID string) (in
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select p.id, p.name, o.name, coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
+		select p.id, p.name, o.id, o.name, coalesce(w.id, ''), coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
 		from user_projects p
 		join sys_organizations o on o.id = p.organization_id
 		left join user_wallets w on w.project_id = p.id
@@ -1442,13 +1473,13 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, name, org string
+		var id, name, orgID, org, walletID string
 		var paid, promo, creditsUsed int64
-		if err := rows.Scan(&id, &name, &org, &paid, &promo, &creditsUsed); err != nil {
+		if err := rows.Scan(&id, &name, &orgID, &org, &walletID, &paid, &promo, &creditsUsed); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "name": name, "organization": org, "paid_credits": paid, "promotional_credits": promo, "credits_used": creditsUsed})
+		items = append(items, response{"id": id, "name": name, "organization_id": orgID, "organization": org, "wallet_id": walletID, "paid_credits": paid, "promotional_credits": promo, "credits_used": creditsUsed})
 	}
 	writeJSON(w, http.StatusOK, response{"projects": items})
 }
@@ -1475,10 +1506,11 @@ func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	walletID := "wallet_" + randomHex(8)
 	_, _ = a.DB.ExecContext(r.Context(), `
 		insert into user_wallets(id, project_id, paid_credits, promotional_credits)
-		values($1, $2, 0, 1000)`, "wallet_"+randomHex(8), id)
-	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization": "Demo Organization", "paid_credits": 0, "promotional_credits": 1000, "credits_used": 0}})
+		values($1, $2, 0, 1000)`, walletID, id)
+	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization_id": "org-demo", "organization": "Demo Organization", "wallet_id": walletID, "paid_credits": 0, "promotional_credits": 1000, "credits_used": 0}})
 }
 
 func (a *App) conversations(w http.ResponseWriter, r *http.Request) {
@@ -1848,7 +1880,8 @@ func (a *App) mockS3Object(w http.ResponseWriter, r *http.Request) {
 func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 	projectID := r.URL.Query().Get("project_id")
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select id, name, prefix, status, created_at, revoked_at
+		select id, name, prefix, scopes, status, environment, rate_limit_per_minute,
+			budget_credits, allowed_ips, created_at, revoked_at, expires_at, last_used_at
 		from user_api_keys
 		where project_id = $1
 		order by created_at desc`, projectID)
@@ -1859,16 +1892,27 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []response{}
 	for rows.Next() {
-		var id, name, prefix, status string
+		var id, name, prefix, scopes, status, environment, allowedIPs string
+		var rateLimit int64
+		var budget sql.NullInt64
 		var createdAt time.Time
-		var revokedAt sql.NullTime
-		if err := rows.Scan(&id, &name, &prefix, &status, &createdAt, &revokedAt); err != nil {
+		var revokedAt, expiresAt, lastUsedAt sql.NullTime
+		if err := rows.Scan(&id, &name, &prefix, &scopes, &status, &environment, &rateLimit, &budget, &allowedIPs, &createdAt, &revokedAt, &expiresAt, &lastUsedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		item := response{"id": id, "name": name, "prefix": prefix, "status": status, "created_at": createdAt}
+		item := response{"id": id, "name": name, "prefix": prefix, "scopes": strings.Split(scopes, ","), "status": status, "environment": environment, "rate_limit_per_minute": rateLimit, "allowed_ips": allowedIPs, "created_at": createdAt}
+		if budget.Valid {
+			item["budget_credits"] = budget.Int64
+		}
 		if revokedAt.Valid {
 			item["revoked_at"] = revokedAt.Time
+		}
+		if expiresAt.Valid {
+			item["expires_at"] = expiresAt.Time
+		}
+		if lastUsedAt.Valid {
+			item["last_used_at"] = lastUsedAt.Time
 		}
 		items = append(items, item)
 	}
@@ -1877,8 +1921,14 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProjectID string `json:"project_id"`
-		Name      string `json:"name"`
+		ProjectID          string   `json:"project_id"`
+		Name               string   `json:"name"`
+		Scopes             []string `json:"scopes"`
+		Environment        string   `json:"environment"`
+		ExpiresInDays      int      `json:"expires_in_days"`
+		RateLimitPerMinute int64    `json:"rate_limit_per_minute"`
+		BudgetCredits      *int64   `json:"budget_credits"`
+		AllowedIPs         []string `json:"allowed_ips"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProjectID == "" {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
@@ -1887,18 +1937,38 @@ func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = "Development key"
 	}
+	if len(req.Scopes) == 0 {
+		req.Scopes = []string{"models:read", "chat:create"}
+	}
+	allowedScopes := map[string]bool{"models:read": true, "chat:create": true, "usage:read": true, "assets:write": true}
+	for _, scope := range req.Scopes {
+		if !allowedScopes[scope] {
+			writeJSON(w, http.StatusBadRequest, response{"error": "invalid_scope", "scope": scope})
+			return
+		}
+	}
+	if req.Environment == "" {
+		req.Environment = "dev"
+	}
+	if req.RateLimitPerMinute <= 0 {
+		req.RateLimitPerMinute = 60
+	}
+	var expiresAt any
+	if req.ExpiresInDays > 0 {
+		expiresAt = time.Now().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
+	}
 	raw := "mk_" + randomHex(24)
 	prefix := raw[:10]
 	hash := hashAPIKey(raw)
 	id := "key_" + randomHex(12)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into user_api_keys(id, project_id, name, prefix, key_hash, scopes, status)
-		values($1, $2, $3, $4, $5, $6, 'active')`, id, req.ProjectID, req.Name, prefix, hash, "models:read,chat:create")
+		insert into user_api_keys(id, project_id, name, prefix, key_hash, scopes, status, expires_at, environment, rate_limit_per_minute, budget_credits, allowed_ips)
+		values($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11)`, id, req.ProjectID, req.Name, prefix, hash, strings.Join(req.Scopes, ","), expiresAt, req.Environment, req.RateLimitPerMinute, req.BudgetCredits, strings.Join(req.AllowedIPs, ","))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusCreated, response{"id": id, "api_key": raw, "prefix": prefix})
+	writeJSON(w, http.StatusCreated, response{"id": id, "api_key": raw, "prefix": prefix, "scopes": req.Scopes, "environment": req.Environment, "expires_at": expiresAt, "rate_limit_per_minute": req.RateLimitPerMinute})
 }
 
 func (a *App) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -1918,7 +1988,14 @@ func (a *App) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	projectID, err := a.authenticateAPIKey(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, response{"error": err.Error()})
+		status := http.StatusUnauthorized
+		if err.Error() == "rate_limit_exceeded" {
+			status = http.StatusTooManyRequests
+		}
+		if err.Error() == "api_key_expired" || err.Error() == "api_key_budget_exceeded" || err.Error() == "ip_not_allowed" || err.Error() == "environment_not_allowed" || err.Error() == "missing_scope" {
+			status = http.StatusForbidden
+		}
+		writeJSON(w, status, response{"error": response{"message": err.Error(), "type": "invalid_request_error", "code": err.Error()}})
 		return
 	}
 	var req struct {
@@ -1927,10 +2004,35 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		BranchID       string        `json:"branch_id"`
 		Messages       []chatMessage `json:"messages"`
 		Parameters     response      `json:"parameters"`
+		Stream         bool          `json:"stream"`
+		Tools          []response    `json:"tools"`
+		ToolChoice     any           `json:"tool_choice"`
+		ResponseFormat response      `json:"response_format"`
+		Temperature    *float64      `json:"temperature"`
+		MaxTokens      *int64        `json:"max_tokens"`
+		User           string        `json:"user"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model == "" {
-		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_request"})
+		writeJSON(w, http.StatusBadRequest, response{"error": response{"message": "model and valid JSON are required", "type": "invalid_request_error", "code": "invalid_request"}})
 		return
+	}
+	if req.Parameters == nil {
+		req.Parameters = response{}
+	}
+	if req.Temperature != nil {
+		req.Parameters["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		req.Parameters["max_tokens"] = *req.MaxTokens
+	}
+	if len(req.Tools) > 0 {
+		req.Parameters["tools"] = req.Tools
+	}
+	if req.ToolChoice != nil {
+		req.Parameters["tool_choice"] = req.ToolChoice
+	}
+	if len(req.ResponseFormat) > 0 {
+		req.Parameters["response_format"] = req.ResponseFormat
 	}
 	route, err := a.selectModelRoute(r.Context(), req.Model, "default")
 	if err != nil {
@@ -1946,10 +2048,21 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": estimatedCharge.CustomerCharge})
 		return
 	}
+	failedRoutes := []selectedModelRoute{}
+	failedMessages := []string{}
 	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, response{"error": "upstream_failed", "provider": route.ProviderSlug, "channel_id": route.ChannelID, "message": err.Error()})
-		return
+		failedRoutes = append(failedRoutes, route)
+		failedMessages = append(failedMessages, err.Error())
+		fallback, fallbackErr := a.selectFallbackModelRoute(r.Context(), req.Model, "default", route.ID)
+		if fallbackErr == nil {
+			route = fallback
+			upstream, err = a.runChatUpstream(r.Context(), route, req.Messages)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, response{"error": response{"message": err.Error(), "type": "server_error", "code": "upstream_failed"}, "provider": route.ProviderSlug, "channel_id": route.ChannelID, "attempts": len(failedRoutes)})
+			return
+		}
 	}
 	content := upstream.Content
 	requestID := "req_" + randomHex(12)
@@ -1978,6 +2091,16 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	for index, failedRoute := range failedRoutes {
+		_, err = a.DB.ExecContext(r.Context(), `
+			insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
+			values($1, $2, $3, $4, $5, 'failed', null, null, 'upstream_error', $6)`,
+			"attempt_"+randomHex(12), requestID, failedRoute.ProviderID, failedRoute.ChannelID, failedRoute.ID, fmt.Sprintf(`{"message":%q}`, failedMessages[index]))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+			return
+		}
+	}
 	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
 		values($1, $2, $3, $4, $5, 'succeeded', $6, $7, null, $8)`,
@@ -1988,7 +2111,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConversationID != "" && len(req.Messages) > 0 {
 		last := req.Messages[len(req.Messages)-1]
-		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Content, content, charge.CustomerCharge, charge.ProviderCost); err != nil {
+		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Text(), content, charge.CustomerCharge, charge.ProviderCost); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
@@ -1997,11 +2120,15 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	if err := a.settleProjectCharge(r.Context(), projectID, requestID, charge.CustomerCharge); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": response{"message": err.Error(), "type": "billing_error", "code": "settlement_failed"}})
+		return
+	}
 	artifacts := []response{}
 	if isGeneratedAssetModality(route.ModelModality) {
 		prompt := ""
 		if len(req.Messages) > 0 {
-			prompt = req.Messages[len(req.Messages)-1].Content
+			prompt = req.Messages[len(req.Messages)-1].Text()
 		}
 		artifacts, err = a.createMockGeneratedArtifacts(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, route, req.Parameters, prompt, charge)
 		if err != nil {
@@ -2009,7 +2136,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, response{
+	completion := response{
 		"id":        requestID,
 		"object":    "chat.completion",
 		"model":     route.UpstreamModelID,
@@ -2017,7 +2144,33 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		"choices":   []response{{"index": 0, "message": response{"role": "assistant", "content": content}, "finish_reason": "stop"}},
 		"usage":     response{"prompt_tokens": upstream.PromptTokens, "completion_tokens": upstream.CompletionTokens, "total_tokens": upstream.PromptTokens + upstream.CompletionTokens, "customer_charge": charge.CustomerCharge, "provider_cost": charge.ProviderCost},
 		"artifacts": artifacts,
-	})
+	}
+	if req.Stream {
+		writeChatCompletionStream(w, completion, route.UpstreamModelID, content, requestID, upstream)
+		return
+	}
+	writeJSON(w, http.StatusOK, completion)
+}
+
+func writeChatCompletionStream(w http.ResponseWriter, completion response, model, content, requestID string, usage upstreamChatResult) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	created := time.Now().Unix()
+	chunks := []response{
+		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"role": "assistant"}, "finish_reason": nil}}},
+		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"content": content}, "finish_reason": nil}}},
+		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{}, "finish_reason": "stop"}}, "usage": response{"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens, "total_tokens": usage.PromptTokens + usage.CompletionTokens}},
+	}
+	for _, chunk := range chunks {
+		raw, _ := json.Marshal(chunk)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 }
 
 type requestCharge struct {
@@ -2342,8 +2495,33 @@ func splitCredits(total, count, index int64) int64 {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    any    `json:"content"`
+	Name       string `json:"name,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+func (m chatMessage) Text() string {
+	switch content := m.Content.(type) {
+	case string:
+		return content
+	case []any:
+		parts := []string{}
+		for _, value := range content {
+			part, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			if part["type"] == "text" {
+				if text, ok := part["text"].(string); ok {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 type upstreamChatResult struct {
@@ -2360,7 +2538,7 @@ func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, mes
 	}
 	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
 	if len(messages) > 0 {
-		content = "Mock response to: " + messages[len(messages)-1].Content
+		content = "Mock response to: " + messages[len(messages)-1].Text()
 	}
 	return upstreamChatResult{
 		Content:           content,
@@ -2397,7 +2575,7 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 
 	systemParts := []geminiPart{}
 	for _, message := range messages {
-		text := strings.TrimSpace(message.Content)
+		text := strings.TrimSpace(message.Text())
 		if text == "" {
 			continue
 		}
@@ -2589,6 +2767,26 @@ func (a *App) selectModelRoute(ctx context.Context, requestedModel, routeGroup s
 	return candidates[0], nil
 }
 
+func (a *App) selectFallbackModelRoute(ctx context.Context, requestedModel, routeGroup, excludedRouteID string) (selectedModelRoute, error) {
+	var route selectedModelRoute
+	err := a.DB.QueryRowContext(ctx, `
+		select r.id, r.route_group, m.slug, m.modality, coalesce(mp.id, ''), r.upstream_model_id,
+			p.id, p.slug, c.id, c.name, c.channel_type, coalesce(c.base_url, ''), coalesce(c.credential_ref, ''),
+			r.priority, r.weight, coalesce(c.response_time_ms, 0)
+		from sys_channel_model_routes r
+		join sys_provider_channels c on c.id = r.channel_id
+		join sys_providers p on p.id = c.provider_id
+		join sys_models m on m.id = r.model_id
+		left join sys_model_profiles mp on mp.id = r.model_profile_id
+		where r.enabled = true and r.status = 'active' and c.status = 'active' and p.status = 'active'
+			and r.route_group = $1 and (m.slug = $2 or mp.slug = $2) and r.id <> $3
+		order by r.priority desc, c.response_time_ms asc nulls last, r.weight desc, r.id asc limit 1`, routeGroup, requestedModel, excludedRouteID).Scan(
+		&route.ID, &route.RouteGroup, &route.ModelSlug, &route.ModelModality, &route.ModelProfileID, &route.UpstreamModelID,
+		&route.ProviderID, &route.ProviderSlug, &route.ChannelID, &route.ChannelName, &route.ChannelType, &route.BaseURL,
+		&route.CredentialRef, &route.Priority, &route.Weight, &route.ResponseTimeMS)
+	return route, err
+}
+
 func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, model, prompt, answer string, customerCharge, providerCost int64) error {
 	var existing string
 	if err := a.DB.QueryRowContext(ctx, `select id from user_conversations where id = $1 and project_id = $2`, conversationID, projectID).Scan(&existing); err != nil {
@@ -2629,11 +2827,39 @@ func (a *App) authenticateAPIKey(r *http.Request) (string, error) {
 		return "", errors.New("missing_api_key")
 	}
 	hash := hashAPIKey(strings.TrimPrefix(header, "Bearer "))
-	var projectID string
-	err := a.DB.QueryRowContext(r.Context(), `select project_id from user_api_keys where key_hash = $1 and status = 'active'`, hash).Scan(&projectID)
+	var projectID, keyID, scopes, environment, allowedIPs string
+	var expiresAt sql.NullTime
+	var rateLimit int64
+	var budget sql.NullInt64
+	err := a.DB.QueryRowContext(r.Context(), `select project_id, id, scopes, environment, allowed_ips, expires_at, rate_limit_per_minute, budget_credits from user_api_keys where key_hash = $1 and status = 'active'`, hash).Scan(&projectID, &keyID, &scopes, &environment, &allowedIPs, &expiresAt, &rateLimit, &budget)
 	if err != nil {
 		return "", errors.New("invalid_api_key")
 	}
+	if expiresAt.Valid && !expiresAt.Time.After(time.Now()) {
+		return "", errors.New("api_key_expired")
+	}
+	if requestedEnvironment := strings.TrimSpace(r.Header.Get("X-Environment")); requestedEnvironment != "" && requestedEnvironment != environment {
+		return "", errors.New("environment_not_allowed")
+	}
+	if !strings.Contains(","+scopes+",", ",chat:create,") {
+		return "", errors.New("missing_scope")
+	}
+	if !ipAllowed(requestIP(r), allowedIPs) {
+		return "", errors.New("ip_not_allowed")
+	}
+	if budget.Valid {
+		var used int64
+		if err := a.DB.QueryRowContext(r.Context(), `select coalesce(sum(customer_charge), 0) from user_usage_events where project_id = $1 and created_at >= date_trunc('month', current_timestamp)`, projectID).Scan(&used); err != nil {
+			return "", err
+		}
+		if used >= budget.Int64 {
+			return "", errors.New("api_key_budget_exceeded")
+		}
+	}
+	if _, _, err := a.enforceRequestLimit(keyID, rateLimit); err != nil {
+		return "", err
+	}
+	_, _ = a.DB.ExecContext(r.Context(), `update user_api_keys set last_used_at = current_timestamp where id = $1`, keyID)
 	return projectID, nil
 }
 

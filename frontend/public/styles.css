@@ -1537,6 +1537,35 @@ pre {
   min-width: 0;
 }
 
+.company-management {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.inline-management-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.inline-management-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.company-management small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
 .credit-panel {
   align-self: start;
 }
@@ -1980,6 +2009,19 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .inline-management-form {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pricing-table {
+    min-width: 620px;
+  }
+
   .panel-title,
   .composer {
     display: grid;
@@ -1989,7 +2031,7 @@ code {
     max-width: none;
   }
 
-.message {
+  .message {
     max-width: 92%;
   }
 }

@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
   status VARCHAR(64) NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   revoked_at TIMESTAMP,
+	 expires_at TIMESTAMP,
+	 last_used_at TIMESTAMP,
+	 environment VARCHAR(64) NOT NULL DEFAULT 'dev',
+	 rate_limit_per_minute BIGINT NOT NULL DEFAULT 60,
+	 budget_credits BIGINT,
+	 allowed_ips VARCHAR(4000) NOT NULL DEFAULT '',
   CONSTRAINT fk_api_keys_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
 );
 
@@ -328,6 +334,33 @@ CREATE TABLE IF NOT EXISTS user_credit_purchases (
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_credit_purchases_user FOREIGN KEY (user_id) REFERENCES sys_users(id)
+);
+
+-- User table: pending and accepted organization invitations.
+CREATE TABLE IF NOT EXISTS user_organization_invitations (
+  id VARCHAR(64) PRIMARY KEY,
+  organization_id VARCHAR(64) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  role VARCHAR(128) NOT NULL DEFAULT 'developer',
+  token_hash VARCHAR(255) NOT NULL UNIQUE,
+  status VARCHAR(64) NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  accepted_at TIMESTAMP,
+  CONSTRAINT fk_org_invites_organization FOREIGN KEY (organization_id) REFERENCES sys_organizations(id)
+);
+
+-- User table: automatic wallet top-up preferences.
+CREATE TABLE IF NOT EXISTS user_auto_topups (
+  id VARCHAR(64) PRIMARY KEY,
+  wallet_id VARCHAR(64) NOT NULL UNIQUE,
+  threshold_credits BIGINT NOT NULL,
+  amount_cents BIGINT NOT NULL,
+  monthly_cap_cents BIGINT NOT NULL,
+  status VARCHAR(64) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_auto_topups_wallet FOREIGN KEY (wallet_id) REFERENCES user_wallets(id)
 );
 
 -- User table: organization billing invoices and invoice metadata.
@@ -624,6 +657,15 @@ ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT N
 ALTER TABLE user_usage_events ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE user_provider_attempts ADD COLUMN IF NOT EXISTS channel_id VARCHAR(64);
 ALTER TABLE user_provider_attempts ADD COLUMN IF NOT EXISTS route_id VARCHAR(64);
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP;
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS environment VARCHAR(64) NOT NULL DEFAULT 'dev';
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_minute BIGINT NOT NULL DEFAULT 60;
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS budget_credits BIGINT;
+ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS allowed_ips VARCHAR(4000) NOT NULL DEFAULT '';
+ALTER TABLE user_payments ADD COLUMN IF NOT EXISTS refunded_amount_cents BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE user_ledger_transactions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
 
 ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS price_seq_id INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE sys_price_rules ADD COLUMN IF NOT EXISTS pricing_variant VARCHAR(128) NOT NULL DEFAULT 'default';

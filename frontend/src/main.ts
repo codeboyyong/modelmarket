@@ -5,7 +5,9 @@ type Summary = {
 type Project = {
   id: string;
   name: string;
+  organization_id: string;
   organization: string;
+  wallet_id: string;
   paid_credits: number;
   promotional_credits: number;
   credits_used: number;
@@ -170,6 +172,7 @@ type AuthResponse = {
     company_name?: string;
   };
   project_id?: string;
+  organization_id?: string;
   provider?: string;
   session?: {
     access_token: string;
@@ -204,6 +207,35 @@ type CompanyUsageResponse = {
   models: CompanyUsageModel[];
 };
 
+type OrganizationMember = {
+  id: string;
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+};
+
+type OrganizationInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+};
+
+type Payment = {
+  id: string;
+  provider: string;
+  provider_payment_id: string;
+  amount_cents: number;
+  refunded_amount_cents: number;
+  currency: string;
+  status: string;
+  created_at: string;
+};
+
 type AdminOverviewResponse = {
   configs: Array<{ key: string; value: string; description: string }>;
   provider_credentials: Array<{ provider: string; provider_slug: string; purpose: string; credential_ref: string; configured: boolean; masked_value: string; key_count: number; status: string }>;
@@ -220,6 +252,7 @@ let currentProjectID = "";
 let currentAPIKey = "";
 let models: Model[] = [];
 let projects: Project[] = [];
+let projectLoadError = "";
 let conversations: Conversation[] = [];
 let branches: ConversationBranch[] = [];
 let assets: WorkspaceAsset[] = [];
@@ -240,7 +273,7 @@ let promptSending = false;
 let outputParamsOpen = false;
 let activeAdminView = "overview";
 let outputParameterValues: Record<string, Record<string, string | number | boolean>> = {};
-const tabs = new Set(["home", "models", "model-detail", "api", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
+const tabs = new Set(["home", "models", "model-detail", "workbench", "admin", "corporate-admin", "pricing", "credit-usage", "company", "privacy", "terms"]);
 const themeModes = new Set(["system", "light", "dark"]);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -476,11 +509,13 @@ async function loadProjects() {
   try {
     const data = await request<{ projects: Project[] }>("/api/v1/projects");
     projects = data.projects;
-  } catch {
+    projectLoadError = "";
+  } catch (error) {
     projects = [];
+    projectLoadError = error instanceof Error ? error.message : String(error);
   }
   const [project] = projects;
-  if (project) currentProjectID = project.id;
+  if (!projects.some((item) => item.id === currentProjectID) && project) currentProjectID = project.id;
   renderProjects();
   if (currentProjectID) await loadWorkspace();
 }
@@ -498,7 +533,7 @@ function renderProjects() {
           <p>${(project.credits_used || 0).toLocaleString()} credits used / ${credits.toLocaleString()} available</p>
         </button>`;
       })
-      .join("") || "<div class=\"empty-state\">No project loaded. Run the dev test data script first.</div>";
+      .join("") || `<div class="empty-state">${projectLoadError ? `Projects could not be loaded: ${escapeHTML(projectLoadError)}` : "No projects yet. Create your first project to begin."}</div>`;
     $("projects").classList.toggle("hidden", !projectPickerOpen);
     renderSelectedProject();
     renderCreditAnalytics();
@@ -1046,7 +1081,6 @@ function renderModelDetail(model: Model) {
       <p>${escapeHTML(descriptionFor(model))}</p>
       <div class="detail-actions">
         <button type="button" data-tab="workbench">Playground</button>
-        <button class="ghost" type="button" data-copy-model="${escapeHTML(model.profile_slug || model.slug)}">Copy model ID</button>
       </div>
     </div>
     <aside class="detail-stats">
@@ -1062,12 +1096,11 @@ function renderModelDetail(model: Model) {
     <span>Benchmarks</span>
     <span>Activity</span>
     <span>Uptime</span>
-    <span>API</span>
   </div>
   <div class="detail-grid">
     <article class="detail-panel">
       <h3>Overview</h3>
-      <p>${escapeHTML(model.profile_name || "Default profile")} is available through the local marketplace catalog and can be routed through the workbench/API surface.</p>
+      <p>${escapeHTML(model.profile_name || "Default profile")} is available through the marketplace catalog and can be used directly in the workbench.</p>
       <div class="tag-row">${capabilityTags(model).map((tag) => `<span class="tag">${escapeHTML(tag)}</span>`).join("")}</div>
     </article>
     <article class="detail-panel">
@@ -1079,15 +1112,6 @@ function renderModelDetail(model: Model) {
     <article class="detail-panel">
       <h3>Supported parameters</h3>
       ${renderSupportedParameters(model)}
-    </article>
-    <article class="detail-panel detail-api">
-      <h3>API</h3>
-      <pre>{
-  "model": "${escapeHTML(model.profile_slug || model.slug)}",
-  "messages": [
-    { "role": "user", "content": "Generate a result" }
-  ]
-}</pre>
     </article>
   </div>`;
 }
@@ -1104,7 +1128,7 @@ function descriptionFor(model: Model) {
 }
 
 function capabilityTags(model: Model) {
-  if (model.modality === "chat") return ["Text chat", "Mock API", "Low latency", "Provider routed"];
+  if (model.modality === "chat") return ["Text chat", "Workbench ready", "Low latency", "Provider routed"];
   if (model.modality === "video") return ["Text to video", "Image input", "Async job", "Provider routed"];
   if (model.modality === "image") return ["Text to image", "Image input", "Credit metered", "Provider routed"];
   if (model.modality === "audio") return ["Audio output", "Prompt input", "Credit metered", "Provider routed"];
@@ -1458,6 +1482,60 @@ async function renderUserCreditUsage() {
     const totalCreditsBought = purchases.reduce((sum, purchase) => sum + purchase.credits, 0);
     renderUserCreditUsageData(range, usageRows, purchases, totalTokens, totalCreditsBought, topUserUsageModel(usageRows));
   }
+  await loadPayments();
+}
+
+async function loadPayments() {
+  const project = projects.find((item) => item.id === currentProjectID);
+  if (!project?.wallet_id) {
+    $("paymentHistoryRows").innerHTML = "<tr><td colspan=\"5\">Select a project with a wallet to load payments.</td></tr>";
+    return;
+  }
+  setPaymentHistoryMessage("Loading payments...");
+  try {
+    const data = await request<{ payments: Payment[] }>(`/api/v1/payments?wallet_id=${encodeURIComponent(project.wallet_id)}`);
+    renderPayments(data.payments || []);
+    setPaymentHistoryMessage("");
+  } catch (error) {
+    setPaymentHistoryMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+function renderPayments(payments: Payment[]) {
+  $("paymentHistoryRows").innerHTML = payments.map((payment) => {
+    const remaining = Math.max(0, payment.amount_cents - payment.refunded_amount_cents);
+    const refundable = remaining > 0 && payment.status !== "pending" && payment.status !== "failed" && payment.status !== "expired";
+    return `<tr>
+      <td><strong>${escapeHTML(payment.provider)}</strong><small>${escapeHTML(payment.id)}</small></td>
+      <td>${escapeHTML(payment.currency)} ${(payment.amount_cents / 100).toFixed(2)}</td>
+      <td>${escapeHTML(payment.currency)} ${(payment.refunded_amount_cents / 100).toFixed(2)}</td>
+      <td>${escapeHTML(formatUserType(payment.status))}</td>
+      <td>${refundable ? `<button class="ghost mini-button" type="button" data-refund-payment="${escapeHTML(payment.id)}" data-refundable-cents="${remaining}">Refund</button>` : "-"}</td>
+    </tr>`;
+  }).join("") || "<tr><td colspan=\"5\">No payments for this project.</td></tr>";
+}
+
+async function refundPayment(paymentID: string, refundableCents: number) {
+  const rawAmount = window.prompt(`Refund amount in USD (maximum $${(refundableCents / 100).toFixed(2)})`, (refundableCents / 100).toFixed(2));
+  if (rawAmount === null) return;
+  const amountCents = Math.round(Number(rawAmount) * 100);
+  if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > refundableCents) {
+    setPaymentHistoryMessage("Enter a valid refund amount within the available balance.", true);
+    return;
+  }
+  setPaymentHistoryMessage("Processing refund...");
+  try {
+    await request("/api/v1/payments/refund", { method: "POST", body: JSON.stringify({ payment_id: paymentID, amount_cents: amountCents }) });
+    await Promise.all([loadProjects(), loadPayments(), renderCreditAnalytics(), renderUserCreditUsage()]);
+    setPaymentHistoryMessage("Refund completed.");
+  } catch (error) {
+    setPaymentHistoryMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+function setPaymentHistoryMessage(message: string, isError = false) {
+  $("paymentHistoryMessage").textContent = message;
+  $("paymentHistoryMessage").classList.toggle("error", isError);
 }
 
 function renderUserCreditUsageData(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[], totalTokens: number, totalCreditsBought: number, topModel: string) {
@@ -1674,11 +1752,80 @@ async function loadCorporateUsage(user: AuthUser) {
   try {
     const data = await request<CompanyUsageResponse>(`/api/v1/company-usage?user_id=${encodeURIComponent(user.id)}`);
     renderCorporateUsage(data);
+    await loadCompanyTeam(data.company.id);
   } catch (error) {
     $("corporateMemberRows").innerHTML = `<tr><td colspan="4">${escapeHTML(error instanceof Error ? error.message : String(error))}</td></tr>`;
     $("corporateUsageLegend").innerHTML = "";
     $("corporateUsageChart").innerHTML = "<span>0<small>credits</small></span>";
   }
+}
+
+function currentOrganizationID() {
+  return projects.find((project) => project.id === currentProjectID)?.organization_id || localStorage.getItem("organizationID") || "";
+}
+
+async function loadCompanyTeam(organizationID = currentOrganizationID()) {
+  if (!organizationID) {
+    $("companyTeamRows").innerHTML = "<tr><td colspan=\"3\">Organization information is unavailable.</td></tr>";
+    $("companyInvitationRows").innerHTML = "<tr><td colspan=\"4\">Organization information is unavailable.</td></tr>";
+    return;
+  }
+  setCompanyTeamMessage("Loading team controls...");
+  try {
+    const [memberData, invitationData] = await Promise.all([
+      request<{ members: OrganizationMember[] }>(`/api/v1/organization/members?organization_id=${encodeURIComponent(organizationID)}`),
+      request<{ invitations: OrganizationInvitation[] }>(`/api/v1/organization/invitations?organization_id=${encodeURIComponent(organizationID)}`)
+    ]);
+    renderCompanyTeam(memberData.members || [], invitationData.invitations || []);
+    setCompanyTeamMessage("");
+  } catch (error) {
+    setCompanyTeamMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+function renderCompanyTeam(members: OrganizationMember[], invitations: OrganizationInvitation[]) {
+  const roles = ["owner", "admin", "billing_admin", "developer", "analyst", "read_only", "provider_admin"];
+  $("companyTeamRows").innerHTML = members.map((member) => `<tr>
+    <td><strong>${escapeHTML(member.name)}</strong><small>${escapeHTML(member.email)}</small></td>
+    <td><select data-member-role="${escapeHTML(member.user_id)}" ${member.role === "owner" ? "disabled" : ""}>${roles.map((role) => `<option value="${role}" ${role === member.role ? "selected" : ""}>${escapeHTML(formatUserType(role))}</option>`).join("")}</select></td>
+    <td>${member.role === "owner" ? "Owner" : `<button class="ghost mini-button" type="button" data-remove-member="${escapeHTML(member.user_id)}">Remove</button>`}</td>
+  </tr>`).join("") || "<tr><td colspan=\"3\">No organization members found.</td></tr>";
+  $("companyInvitationRows").innerHTML = invitations.map((invitation) => `<tr>
+    <td>${escapeHTML(invitation.email)}</td><td>${escapeHTML(formatUserType(invitation.role))}</td><td>${escapeHTML(formatUserType(invitation.status))}</td><td>${escapeHTML(new Date(invitation.expires_at).toLocaleDateString())}</td>
+  </tr>`).join("") || "<tr><td colspan=\"4\">No pending invitations.</td></tr>";
+}
+
+async function updateCompanyMember(userID: string, role: string, remove = false) {
+  const organizationID = currentOrganizationID();
+  if (!organizationID) throw new Error("Select an organization project first.");
+  setCompanyTeamMessage(remove ? "Removing member..." : "Updating member role...");
+  await request("/api/v1/organization/members", { method: "POST", body: JSON.stringify({ organization_id: organizationID, user_id: userID, role, remove }) });
+  await loadCompanyTeam(organizationID);
+  const user = getStoredUser();
+  if (user) await loadCorporateUsage(user);
+  setCompanyTeamMessage(remove ? "Member removed." : "Member role updated.");
+}
+
+async function createCompanyInvitation(event: SubmitEvent) {
+  event.preventDefault();
+  const organizationID = currentOrganizationID();
+  const email = ($("companyInviteEmail") as HTMLInputElement).value.trim();
+  const role = ($("companyInviteRole") as HTMLSelectElement).value;
+  if (!organizationID || !email) { setCompanyTeamMessage("Organization and email are required.", true); return; }
+  setCompanyTeamMessage("Creating invitation...");
+  try {
+    await request("/api/v1/organization/invitations", { method: "POST", body: JSON.stringify({ organization_id: organizationID, email, role }) });
+    ($("companyInviteEmail") as HTMLInputElement).value = "";
+    await loadCompanyTeam(organizationID);
+    setCompanyTeamMessage(`Invitation created for ${email}.`);
+  } catch (error) {
+    setCompanyTeamMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+function setCompanyTeamMessage(message: string, isError = false) {
+  $("companyTeamMessage").textContent = message;
+  $("companyTeamMessage").classList.toggle("error", isError);
 }
 
 function renderCorporateUsage(data: CompanyUsageResponse | null) {
@@ -2152,6 +2299,7 @@ function completeAuth(auth: AuthResponse, message: string) {
     return;
   }
   if (auth.project_id) currentProjectID = auth.project_id;
+  if (auth.organization_id) localStorage.setItem("organizationID", auth.organization_id);
   localStorage.setItem("authUser", JSON.stringify(auth.user));
   localStorage.setItem("authSession", JSON.stringify(auth.session || {}));
   renderAuthUser();
@@ -2404,6 +2552,23 @@ $("modelSearch").addEventListener("input", renderModels);
 $("pricingSearch").addEventListener("input", renderPricing);
 $("creditRange").addEventListener("change", renderCreditAnalytics);
 $("userUsageRange").addEventListener("change", renderUserCreditUsage);
+$("refreshPayments").addEventListener("click", () => loadPayments().catch(showError));
+$("paymentHistoryRows").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-refund-payment]");
+  if (!button) return;
+  refundPayment(button.dataset.refundPayment || "", Number(button.dataset.refundableCents || 0)).catch(showError);
+});
+$("refreshCompanyTeam").addEventListener("click", () => loadCompanyTeam().catch(showError));
+$("companyInviteForm").addEventListener("submit", (event) => createCompanyInvitation(event as SubmitEvent));
+$("companyTeamRows").addEventListener("change", (event) => {
+  const select = (event.target as HTMLElement).closest<HTMLSelectElement>("[data-member-role]");
+  if (select) updateCompanyMember(select.dataset.memberRole || "", select.value).catch(showError);
+});
+$("companyTeamRows").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-remove-member]");
+  if (!button || !window.confirm("Remove this member from the organization?")) return;
+  updateCompanyMember(button.dataset.removeMember || "", "", true).catch(showError);
+});
 $("pricingRows").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pricing-model-slug]");
   if (button) showModelDetail(button.dataset.pricingModelSlug || "");
