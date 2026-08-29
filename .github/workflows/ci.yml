@@ -1,30 +1,50 @@
-name: CI
+name: ci
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  backend:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
-      - working-directory: backend
-        run: go test ./...
+          go-version: "1.25.x"
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: scripts/validate-local.sh
+      - run: cd backend && go vet ./...
+      - run: docker compose config --quiet
 
-  frontend:
+  postgres-demo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v5
         with:
-          node-version: "24"
-      - working-directory: frontend
-        run: npm install
-      - working-directory: frontend
-        run: npm run typecheck
-      - working-directory: frontend
-        run: npm run build
+          go-version: "1.25.x"
+          cache-dependency-path: backend/go.sum
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: docker compose up -d --build postgres backend frontend
+      - name: Initialize and seed PostgreSQL
+        run: scripts/init_db.sh dev && scripts/populate_test_data.sh dev
+      - name: Test concurrent PostgreSQL reservations
+        run: cd backend && go test ./internal/httpapi -run Postgres -count=1
+        env:
+          MM_INTEGRATION_DATABASE_URL: postgres://model_market:model_market@localhost:5432/model_market?sslmode=disable
+      - name: Run local-filesystem artifact demo
+        run: scripts/demo-smoke.sh dev
+      - if: always()
+        run: docker compose logs --no-color backend frontend postgres

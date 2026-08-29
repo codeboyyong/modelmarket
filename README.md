@@ -107,6 +107,10 @@ scripts/cleanup-retention.sh dev --apply
 
 The smoke creates a mock payment purchase, creates a project API key, generates a mock image artifact, downloads it through the local mock S3 endpoint, and verifies the database row.
 
+The mock S3 endpoint is filesystem-backed: objects are written beneath
+`OBJECT_STORAGE_DIR` and served by the backend. No AWS account or S3 service is
+needed for the MVP demo. CI runs this same database-backed smoke flow.
+
 Redis is optional in Phase 1. The default Docker Compose stack runs with PostgreSQL only. To start Redis as well for future cache/rate-limit experiments:
 
 ```sh
@@ -403,7 +407,7 @@ Next phase:
 - metadata manager editing
 - model profile resolution
 - real provider adapter
-- credit reservation/capture
+- broader production billing features such as automatic top-up and disputes
 - persisted Workbench chat
 
 

@@ -135,7 +135,13 @@ OAuth requirements:
 
 ## Passwordless and Sessions
 
-Future passwordless/session requirements:
+Production-mode sessions use random bearer tokens, store only SHA-256 token
+hashes in `sys_sessions`, enforce expiration, and can be revoked through the
+logout endpoint. The frontend attaches the session token to protected API
+requests. New and changed production passwords use bcrypt; successful login
+upgrades legacy development hashes.
+
+Remaining passwordless/session requirements:
 
 - Use signed, expiring session tokens.
 - Hash session tokens before storing them if persistent sessions are used.
@@ -202,6 +208,12 @@ Payment requirements:
 - Use idempotency keys for payment events, credit grants, refunds, and ledger entries.
 - Keep ledger transactions immutable after posting.
 - Audit manual credit adjustments and refunds.
+
+Inference charges use a reservation lifecycle. The backend locks the project
+wallet and deducts an estimated charge before provider dispatch. On success it
+captures the provider-reported final charge and releases any unused credits; on
+failure it restores the reservation. Reservation, capture, and release entries
+use unique request-based idempotency keys in the immutable ledger.
 
 ## Webhook Security
 

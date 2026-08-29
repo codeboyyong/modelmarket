@@ -474,10 +474,16 @@ function renderAssetDownload(asset: WorkspaceAsset): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+	let sessionToken = "";
+	try {
+		const session = JSON.parse(localStorage.getItem("authSession") || "{}");
+		sessionToken = typeof session.access_token === "string" ? session.access_token : "";
+	} catch {}
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+	  ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       ...(options.headers || {})
     }
   });

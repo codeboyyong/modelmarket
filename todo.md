@@ -12,7 +12,7 @@ larger production and enterprise extensions can still be tracked separately.
   identity verification, and account linking.
 - [ ] 3. Tenant and project data isolation across projects, conversations,
   assets, usage, company views, and admin APIs.
-- [ ] 4. Transactional billing: estimate, reserve, capture, release/refund,
+- [x] 4. Transactional billing: estimate, reserve, capture, release/refund,
   immutable ledger entries, failure handling, and concurrency safety.
 - [ ] 5. Provider fallback and reliability routing: ordered provider attempts,
   retry policy, health-aware selection, and single customer settlement.
@@ -66,9 +66,11 @@ larger production and enterprise extensions can still be tracked separately.
 
 The requested MVP work delivered in the current implementation includes:
 
-- Item 4: atomic, row-locked inference settlement that consumes promotional
-  credits before paid credits and creates immutable, idempotent ledger rows.
-  Credit reservation/release before provider dispatch remains open.
+- Item 4: atomic, row-locked inference reservation before provider dispatch,
+  final charge capture, unused-credit or failure release, promotional-first
+  consumption, and immutable idempotent ledger rows. Final charges above the
+  estimate are also reconciled under the wallet lock without allowing a
+  negative balance.
 - Item 5: ordered retry to a second active route, latency-aware fallback
   selection, and persisted failed provider attempts when fallback succeeds.
   Circuit breakers and multi-provider health scoring remain open.
@@ -91,6 +93,24 @@ The requested MVP work delivered in the current implementation includes:
   expired Stripe checkout handling, and idempotent successful Stripe posting.
   Provider-side Stripe refund submission, invoices/tax, saved methods,
   automatic top-up execution, disputes, and promotional expiry remain open.
+
+## August 2026 production-hardening progress
+
+- Item 1: production mode now issues random persistent sessions, stores only
+  SHA-256 token hashes, enforces expiration, supports logout/revocation, sends
+  browser bearer tokens, uses bcrypt for new/changed production passwords, and
+  upgrades legacy password hashes after a successful login. Real OAuth and
+  complete role-policy coverage remain open.
+- Item 3: production browser routes now require a session and enforce user,
+  organization, project, conversation, asset, and API-key membership checks at
+  the HTTP boundary. Additional policy tests and company/admin query review
+  remain open before calling tenant isolation complete.
+- Item 5/8: provider dispatch now uses a common adapter interface with local
+  mock, Google Gemini, and configurable OpenAI-compatible adapters. Additional
+  provider-specific adapters and circuit breakers remain open.
+- Item 25: GitHub Actions now validates Go, TypeScript, Go vet, Compose config,
+  and a PostgreSQL-backed full demo including filesystem-backed mock object
+  storage.
 
 ## User-interface launch checklist
 

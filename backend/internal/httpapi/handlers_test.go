@@ -365,12 +365,18 @@ func TestChatCompletions(t *testing.T) {
 	mock.ExpectQuery("select pr.id, pr.pricing_variant").
 		WithArgs("mock-chat", "profile-mock-chat-default").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
-	mock.ExpectQuery("with selected_project").
-		WithArgs("project-1").
-		WillReturnRows(sqlmock.NewRows([]string{"credits", "credits"}).AddRow(int64(100), int64(0)))
+	mock.ExpectBegin()
+	mock.ExpectQuery("select w.id, w.paid_credits, w.promotional_credits").WithArgs("project-1").WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", int64(100), int64(0)))
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(0), int64(1), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-1), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	mock.ExpectQuery("select pr.id, pr.pricing_variant").
 		WithArgs("mock-chat", "profile-mock-chat-default").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
+	mock.ExpectBegin()
+	mock.ExpectQuery("select paid_credits, promotional_credits").WithArgs("wallet-1").WillReturnRows(sqlmock.NewRows([]string{"paid_credits", "promotional_credits"}).AddRow(int64(99), int64(0)))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	mock.ExpectExec("insert into user_inference_requests").
 		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -380,11 +386,6 @@ func TestChatCompletions(t *testing.T) {
 	mock.ExpectExec("insert into user_usage_events").
 		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "mock-chat", "mock-provider", "chat_completion", 1, sqlmock.AnyArg(), int64(1), int64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectBegin()
-	mock.ExpectQuery("select id, paid_credits, promotional_credits").WithArgs("project-1").WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", int64(100), int64(0)))
-	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(0), int64(1), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-1), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -832,7 +833,7 @@ func TestUpdateAdminProviderCredential(t *testing.T) {
 	}
 }
 
-func TestUpdateAdminProviderCredentialRequiresDevMode(t *testing.T) {
+func TestUpdateAdminProviderCredentialRequiresAuthenticationOutsideDevMode(t *testing.T) {
 	app, _, cleanup := testApp(t)
 	defer cleanup()
 	app.Config.DevMode = false
@@ -841,10 +842,10 @@ func TestUpdateAdminProviderCredentialRequiresDevMode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	assertJSONField(t, rec.Body.Bytes(), "error", "credential_updates_disabled")
+	assertJSONField(t, rec.Body.Bytes(), "error", "authentication_required")
 }
 
 func stripeTestSignature(payload []byte, secret string) string {

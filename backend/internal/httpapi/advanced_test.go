@@ -229,18 +229,71 @@ func TestWriteChatCompletionStream(t *testing.T) {
 	}
 }
 
-func TestSettleProjectChargeUsesPromotionalCreditsFirst(t *testing.T) {
+func TestReserveProjectCreditsUsesPromotionalCreditsFirst(t *testing.T) {
 	app, mock, cleanup := testApp(t)
 	defer cleanup()
 	mock.ExpectBegin()
-	mock.ExpectQuery("select id, paid_credits, promotional_credits").WithArgs("project-1").
+	mock.ExpectQuery("select w.id, w.paid_credits, w.promotional_credits").WithArgs("project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", int64(10), int64(3)))
 	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(3), int64(2), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-3), "usage_promo_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-2), "usage_paid_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-3), "reserve_promo_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-2), "reserve_paid_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := app.settleProjectCharge(context.Background(), "project-1", "req_1", 5); err != nil {
+	reservation, err := app.reserveProjectCredits(context.Background(), "project-1", "req_1", 5)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if reservation.PromotionalCredits != 3 || reservation.PaidCredits != 2 {
+		t.Fatalf("unexpected reservation: %+v", reservation)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReleaseProjectCreditsRestoresReservation(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(3), int64(2), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(3), "release_promo_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(2), "release_paid_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := app.releaseProjectCredits(context.Background(), "req_1", creditReservation{WalletID: "wallet-1", PromotionalCredits: 3, PaidCredits: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureProjectCreditsReleasesUnusedPaidCredits(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectQuery("select paid_credits, promotional_credits").WithArgs("wallet-1").WillReturnRows(sqlmock.NewRows([]string{"paid_credits", "promotional_credits"}).AddRow(int64(10), int64(0)))
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(0), int64(3), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(3), "capture_release_paid_req_1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", "capture_req_1", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	reservation := creditReservation{WalletID: "wallet-1", PaidCredits: 5}
+	if err := app.captureProjectCredits(context.Background(), "req_1", reservation, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureProjectCreditsRejectsUnaffordableOverage(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectQuery("select paid_credits, promotional_credits").WithArgs("wallet-1").WillReturnRows(sqlmock.NewRows([]string{"paid_credits", "promotional_credits"}).AddRow(int64(1), int64(0)))
+	mock.ExpectRollback()
+	err := app.captureProjectCredits(context.Background(), "req_1", creditReservation{WalletID: "wallet-1", PaidCredits: 2}, 4)
+	if err == nil || err.Error() != "insufficient_credits" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

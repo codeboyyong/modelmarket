@@ -43,6 +43,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/signup", a.signup)
 	mux.HandleFunc("POST /api/v1/auth/change-password", a.changePassword)
 	mux.HandleFunc("POST /api/v1/auth/social/dev", a.devSocialLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/v1/models", a.models)
 	mux.HandleFunc("GET /api/v1/pricing", a.pricing)
 	mux.HandleFunc("GET /api/v1/company-usage", a.companyUsage)
@@ -81,7 +82,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/payments", a.payments)
 	mux.HandleFunc("POST /api/v1/payments/refund", a.refundPayment)
 	mux.HandleFunc("POST /api/v1/chat/completions", a.chatCompletions)
-	return a.observe(cors(mux))
+	return a.observe(cors(a.authenticated(mux)))
 }
 
 func cors(next http.Handler) http.Handler {

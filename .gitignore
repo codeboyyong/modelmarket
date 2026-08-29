@@ -40,6 +40,11 @@ frontend/dist/
 # Local runtime data
 tmp/
 
+# Database backup archives (may contain sensitive production data)
+backups/
+*.dump
+*.dump.partial
+
 # Editor/IDE
 # .idea/
 # .vscode/

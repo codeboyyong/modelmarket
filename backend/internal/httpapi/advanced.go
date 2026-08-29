@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -378,10 +379,66 @@ func (a *App) refundPayment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"payment_id": req.PaymentID, "status": newStatus, "refunded_amount_cents": newRefunded, "credits_reversed": credits})
 }
 
-// settleProjectCharge atomically consumes promotional credits first and then
-// paid credits. The row lock prevents two requests from overspending a wallet.
-func (a *App) settleProjectCharge(ctx context.Context, projectID, requestID string, credits int64) error {
+type creditReservation struct {
+	WalletID           string
+	PromotionalCredits int64
+	PaidCredits        int64
+}
+
+func (r creditReservation) Total() int64 {
+	return r.PromotionalCredits + r.PaidCredits
+}
+
+// reserveProjectCredits atomically removes credits from the available wallet
+// balance before provider dispatch. The wallet row lock prevents concurrent
+// requests from reserving the same credits.
+func (a *App) reserveProjectCredits(ctx context.Context, projectID, requestID string, credits int64) (creditReservation, error) {
+	reservation := creditReservation{}
 	if credits <= 0 {
+		return reservation, nil
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return reservation, err
+	}
+	defer tx.Rollback()
+	var paid, promotional int64
+	err = tx.QueryRowContext(ctx, `
+		select w.id, w.paid_credits, w.promotional_credits
+		from user_projects p
+		join user_wallets w on (p.company_id is not null and w.company_id = p.company_id and w.project_id is null)
+			or (p.company_id is null and w.project_id = p.id)
+		where p.id = $1
+		for update of w`, projectID).Scan(&reservation.WalletID, &paid, &promotional)
+	if err != nil {
+		return reservation, err
+	}
+	if paid+promotional < credits {
+		return reservation, errors.New("insufficient_credits")
+	}
+	reservation.PromotionalCredits = credits
+	if reservation.PromotionalCredits > promotional {
+		reservation.PromotionalCredits = promotional
+	}
+	reservation.PaidCredits = credits - reservation.PromotionalCredits
+	if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits - $1, paid_credits = paid_credits - $2, updated_at = current_timestamp where id = $3`, reservation.PromotionalCredits, reservation.PaidCredits, reservation.WalletID); err != nil {
+		return reservation, err
+	}
+	if reservation.PromotionalCredits > 0 {
+		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'reservation',$3,'promotional','posted','inference reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, -reservation.PromotionalCredits, "reserve_promo_"+requestID); err != nil {
+			return reservation, err
+		}
+	}
+	if reservation.PaidCredits > 0 {
+		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'reservation',$3,'paid','posted','inference reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, -reservation.PaidCredits, "reserve_paid_"+requestID); err != nil {
+			return reservation, err
+		}
+	}
+	return reservation, tx.Commit()
+}
+
+func (a *App) releaseProjectCredits(ctx context.Context, requestID string, reservation creditReservation) error {
+	if reservation.Total() <= 0 {
 		return nil
 	}
 	tx, err := a.DB.BeginTx(ctx, nil)
@@ -389,32 +446,83 @@ func (a *App) settleProjectCharge(ctx context.Context, projectID, requestID stri
 		return err
 	}
 	defer tx.Rollback()
-	var walletID string
-	var paid, promotional int64
-	err = tx.QueryRowContext(ctx, `select id, paid_credits, promotional_credits from user_wallets where project_id = $1 for update`, projectID).Scan(&walletID, &paid, &promotional)
+	if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits + $1, paid_credits = paid_credits + $2, updated_at = current_timestamp where id = $3`, reservation.PromotionalCredits, reservation.PaidCredits, reservation.WalletID); err != nil {
+		return err
+	}
+	if reservation.PromotionalCredits > 0 {
+		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'release',$3,'promotional','posted','inference reservation released',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, reservation.PromotionalCredits, "release_promo_"+requestID); err != nil {
+			return err
+		}
+	}
+	if reservation.PaidCredits > 0 {
+		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'release',$3,'paid','posted','inference reservation released',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, reservation.PaidCredits, "release_paid_"+requestID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// captureProjectCredits reconciles the reservation with the final charge. A
+// smaller charge releases the unused portion; a larger charge atomically draws
+// the difference only if the wallet still has sufficient funds.
+func (a *App) captureProjectCredits(ctx context.Context, requestID string, reservation creditReservation, actual int64) error {
+	if actual < 0 {
+		return errors.New("invalid_credit_charge")
+	}
+	if actual == 0 && reservation.Total() == 0 {
+		return nil
+	}
+	tx, err := a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if paid+promotional < credits {
-		return errors.New("insufficient_credits")
-	}
-	promoCharge := credits
-	if promoCharge > promotional {
-		promoCharge = promotional
-	}
-	paidCharge := credits - promoCharge
-	if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits - $1, paid_credits = paid_credits - $2, updated_at = current_timestamp where id = $3`, promoCharge, paidCharge, walletID); err != nil {
+	defer tx.Rollback()
+	var paid, promotional int64
+	if err = tx.QueryRowContext(ctx, `select paid_credits, promotional_credits from user_wallets where id = $1 for update`, reservation.WalletID).Scan(&paid, &promotional); err != nil {
 		return err
 	}
-	if promoCharge > 0 {
-		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'usage',$3,'promotional','posted','inference charge',$4,'{}')`, "ledger_"+randomHex(8), walletID, -promoCharge, "usage_promo_"+requestID); err != nil {
+	reserved := reservation.Total()
+	if actual < reserved {
+		unused := reserved - actual
+		releasePaid := min(unused, reservation.PaidCredits)
+		releasePromo := unused - releasePaid
+		if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits + $1, paid_credits = paid_credits + $2, updated_at = current_timestamp where id = $3`, releasePromo, releasePaid, reservation.WalletID); err != nil {
 			return err
+		}
+		if releasePromo > 0 {
+			if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'release',$3,'promotional','posted','unused inference reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, releasePromo, "capture_release_promo_"+requestID); err != nil {
+				return err
+			}
+		}
+		if releasePaid > 0 {
+			if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'release',$3,'paid','posted','unused inference reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, releasePaid, "capture_release_paid_"+requestID); err != nil {
+				return err
+			}
+		}
+	} else if actual > reserved {
+		extra := actual - reserved
+		if paid+promotional < extra {
+			return errors.New("insufficient_credits")
+		}
+		extraPromo := min(extra, promotional)
+		extraPaid := extra - extraPromo
+		if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits - $1, paid_credits = paid_credits - $2, updated_at = current_timestamp where id = $3`, extraPromo, extraPaid, reservation.WalletID); err != nil {
+			return err
+		}
+		if extraPromo > 0 {
+			if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'capture',$3,'promotional','posted','inference charge above reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, -extraPromo, "capture_extra_promo_"+requestID); err != nil {
+				return err
+			}
+		}
+		if extraPaid > 0 {
+			if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'capture',$3,'paid','posted','inference charge above reservation',$4,'{}')`, "ledger_"+randomHex(8), reservation.WalletID, -extraPaid, "capture_extra_paid_"+requestID); err != nil {
+				return err
+			}
 		}
 	}
-	if paidCharge > 0 {
-		if _, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1,$2,'usage',$3,'paid','posted','inference charge',$4,'{}')`, "ledger_"+randomHex(8), walletID, -paidCharge, "usage_paid_"+requestID); err != nil {
-			return err
-		}
+	_, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'capture',0,'mixed','posted','inference reservation captured',$3,$4)`, "ledger_"+randomHex(8), reservation.WalletID, "capture_"+requestID, fmt.Sprintf(`{"reserved":%d,"actual":%d}`, reserved, actual))
+	if err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type response map[string]any
@@ -119,10 +122,15 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
 	}
-	if storedHash == "" || storedHash != hashPassword(req.Password) {
+	if storedHash == "" || !verifyPassword(storedHash, req.Password) {
 		a.recordLoginFailure(loginLimitKey)
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
 		return
+	}
+	if !a.Config.DevMode && !strings.HasPrefix(storedHash, "$2") {
+		if upgraded, hashErr := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost); hashErr == nil {
+			_, _ = a.DB.ExecContext(r.Context(), `update sys_users set password_hash = $1 where email = $2`, string(upgraded), email)
+		}
 	}
 	login, err := a.loginByEmail(r.Context(), email)
 	if err != nil {
@@ -156,7 +164,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 	result, err := a.DB.ExecContext(r.Context(), `
 		update sys_users
 		set password_hash = $1
-		where lower(email) = lower($2)`, hashPassword(req.Password), email)
+		where lower(email) = lower($2)`, a.passwordHash(req.Password), email)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -258,7 +266,7 @@ func (a *App) signup(w http.ResponseWriter, r *http.Request) {
 	membershipID := "membership_" + randomHex(8)
 	_, err := a.DB.ExecContext(r.Context(), `
 		insert into sys_users(id, email, name, avatar_url, status, password_hash, user_type, company_id, ui_theme, language)
-		values($1, $2, $3, null, 'active', $4, $5, $6, 'Light', 'EN')`, userID, req.Email, req.Name, hashPassword(req.Password), userType, companyID)
+		values($1, $2, $3, null, 'active', $4, $5, $6, 'Light', 'EN')`, userID, req.Email, req.Name, a.passwordHash(req.Password), userType, companyID)
 	if err != nil {
 		if a.Config.DevMode {
 			writeJSON(w, http.StatusCreated, devAuthResponse(req.Email, req.Name))
@@ -320,11 +328,19 @@ func (a *App) loginByEmail(ctx context.Context, email string) (response, error) 
 	if err != nil {
 		return nil, err
 	}
+	session := response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"}
+	if !a.Config.DevMode {
+		raw, expiresAt, err := a.createSession(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		session = response{"access_token": raw, "token_type": "Bearer", "expires_at": expiresAt}
+	}
 	return response{
 		"user":            authUserResponse(userID, email, name, userType, companyID.String, companyName.String),
 		"organization_id": orgID,
 		"project_id":      projectID,
-		"session":         response{"access_token": "dev_" + randomHex(16), "token_type": "Bearer"},
+		"session":         session,
 	}, nil
 }
 
@@ -1467,7 +1483,7 @@ func (a *App) projectAvailableCredits(ctx context.Context, projectID string) (in
 }
 
 func (a *App) projects(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), `
+	query := `
 		select p.id, p.name, o.id, o.name, coalesce(w.id, ''), coalesce(w.paid_credits, 0), coalesce(w.promotional_credits, 0), coalesce(u.credits_used, 0)
 		from user_projects p
 		join sys_organizations o on o.id = p.organization_id
@@ -1477,8 +1493,14 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 			select project_id, sum(customer_charge) as credits_used
 			from user_usage_events
 			group by project_id
-		) u on u.project_id = p.id
-		order by p.created_at asc`)
+		) u on u.project_id = p.id`
+	var rows *sql.Rows
+	var err error
+	if user, ok := currentUser(r.Context()); ok {
+		rows, err = a.DB.QueryContext(r.Context(), query+` where exists (select 1 from sys_memberships m where m.organization_id = p.organization_id and m.user_id = $1) order by p.created_at asc`, user.ID)
+	} else {
+		rows, err = a.DB.QueryContext(r.Context(), query+` order by p.created_at asc`)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1512,9 +1534,17 @@ func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "project_" + randomHex(8)
 	slug := slugify(name) + "-" + randomHex(3)
+	organizationID := "org-demo"
+	organizationName := "Demo Organization"
+	if user, ok := currentUser(r.Context()); ok {
+		if err := a.DB.QueryRowContext(r.Context(), `select o.id, o.name from sys_memberships m join sys_organizations o on o.id = m.organization_id where m.user_id = $1 and o.status = 'active' order by m.created_at limit 1`, user.ID).Scan(&organizationID, &organizationName); err != nil {
+			writeJSON(w, http.StatusForbidden, response{"error": "organization_membership_required"})
+			return
+		}
+	}
 	_, err := a.DB.ExecContext(r.Context(), `
 		insert into user_projects(id, organization_id, name, slug, environment, retention_policy)
-		values($1, 'org-demo', $2, $3, 'dev', '{"conversation_days":30,"asset_days":30}')`, id, name, slug)
+		values($1, $2, $3, $4, 'dev', '{"conversation_days":30,"asset_days":30}')`, id, organizationID, name, slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1523,7 +1553,7 @@ func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
 	_, _ = a.DB.ExecContext(r.Context(), `
 		insert into user_wallets(id, project_id, paid_credits, promotional_credits)
 		values($1, $2, 0, 1000)`, walletID, id)
-	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization_id": "org-demo", "organization": "Demo Organization", "wallet_id": walletID, "paid_credits": 0, "promotional_credits": 1000, "credits_used": 0}})
+	writeJSON(w, http.StatusCreated, response{"project": response{"id": id, "name": name, "organization_id": organizationID, "organization": organizationName, "wallet_id": walletID, "paid_credits": 0, "promotional_credits": 1000, "credits_used": 0}})
 }
 
 func (a *App) conversations(w http.ResponseWriter, r *http.Request) {
@@ -2069,15 +2099,23 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
 		return
 	}
-	estimatedCharge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, upstreamChatResult{PromptTokens: len(req.Messages)})
+	estimatedCharge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, estimateChatUsage(route, req.Parameters, req.Messages))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	if err := a.enforceProjectBalance(r.Context(), projectID, estimatedCharge.CustomerCharge); err != nil {
+	requestID := "req_" + randomHex(12)
+	reservation, err := a.reserveProjectCredits(r.Context(), projectID, requestID, estimatedCharge.CustomerCharge)
+	if err != nil {
 		writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": estimatedCharge.CustomerCharge})
 		return
 	}
+	reservationCaptured := false
+	defer func() {
+		if !reservationCaptured {
+			_ = a.releaseProjectCredits(context.WithoutCancel(r.Context()), requestID, reservation)
+		}
+	}()
 	failedRoutes := []selectedModelRoute{}
 	failedMessages := []string{}
 	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages)
@@ -2095,7 +2133,6 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	content := upstream.Content
-	requestID := "req_" + randomHex(12)
 	metadata := response{"requested_model": req.Model, "upstream_model_id": route.UpstreamModelID, "route_group": route.RouteGroup}
 	if len(req.Parameters) > 0 {
 		metadata["parameters"] = req.Parameters
@@ -2105,12 +2142,11 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	if charge.CustomerCharge > estimatedCharge.CustomerCharge {
-		if err := a.enforceProjectBalance(r.Context(), projectID, charge.CustomerCharge); err != nil {
-			writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": charge.CustomerCharge})
-			return
-		}
+	if err := a.captureProjectCredits(r.Context(), requestID, reservation, charge.CustomerCharge); err != nil {
+		writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": charge.CustomerCharge})
+		return
 	}
+	reservationCaptured = true
 	metadata["pricing"] = charge.Metadata
 	metadataRaw, _ := json.Marshal(metadata)
 	_, err = a.DB.ExecContext(r.Context(), `
@@ -2150,10 +2186,6 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	if err := a.settleProjectCharge(r.Context(), projectID, requestID, charge.CustomerCharge); err != nil {
-		writeJSON(w, http.StatusInternalServerError, response{"error": response{"message": err.Error(), "type": "billing_error", "code": "settlement_failed"}})
-		return
-	}
 	artifacts := []response{}
 	if isGeneratedAssetModality(route.ModelModality) {
 		prompt := ""
@@ -2180,6 +2212,22 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, completion)
+}
+
+func estimateChatUsage(route selectedModelRoute, parameters response, messages []chatMessage) upstreamChatResult {
+	if route.ModelModality != "chat" {
+		return upstreamChatResult{}
+	}
+	promptTokens := 0
+	for _, message := range messages {
+		// A conservative local estimate is enough for reservation; provider usage
+		// remains authoritative for final capture.
+		promptTokens += max(1, (len([]rune(message.Text()))+3)/4)
+	}
+	return upstreamChatResult{
+		PromptTokens:     promptTokens,
+		CompletionTokens: int(intParameter(parameters, "max_tokens", 512)),
+	}
 }
 
 func writeChatCompletionStream(w http.ResponseWriter, completion response, model, content, requestID string, usage upstreamChatResult) {
@@ -2563,20 +2611,7 @@ type upstreamChatResult struct {
 }
 
 func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
-	if route.ChannelType == "google_gemini" {
-		return a.callGeminiGenerateContent(ctx, route, messages)
-	}
-	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
-	if len(messages) > 0 {
-		content = "Mock response to: " + messages[len(messages)-1].Text()
-	}
-	return upstreamChatResult{
-		Content:           content,
-		PromptTokens:      len(messages),
-		CompletionTokens:  len(content),
-		LatencyMS:         route.ResponseTimeMS,
-		ProviderRequestID: "mock-" + randomHex(8),
-	}, nil
+	return a.providerAdapter(route).Complete(ctx, route, messages)
 }
 
 func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
@@ -3020,6 +3055,24 @@ func hashAPIKey(raw string) string {
 func hashPassword(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+func (a *App) passwordHash(raw string) string {
+	if a.Config.DevMode {
+		return hashPassword(raw)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(raw), bcrypt.DefaultCost)
+	if err != nil {
+		return hashPassword(raw)
+	}
+	return string(hash)
+}
+
+func verifyPassword(stored, raw string) bool {
+	if strings.HasPrefix(stored, "$2") {
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(raw)) == nil
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(hashPassword(raw))) == 1
 }
 
 func slugify(value string) string {
