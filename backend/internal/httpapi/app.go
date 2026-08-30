@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rsa"
 	"database/sql"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"model-market/backend/internal/config"
 )
@@ -30,6 +32,9 @@ type App struct {
 	loginLimits        map[string]*loginAttemptWindow
 	metricsMu          sync.Mutex
 	metrics            map[string]*requestMetric
+	googleKeysMu       sync.Mutex
+	googleKeys         map[string]*rsa.PublicKey
+	googleKeysExpires  time.Time
 }
 
 func (a *App) Routes() http.Handler {
@@ -43,6 +48,9 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/signup", a.signup)
 	mux.HandleFunc("POST /api/v1/auth/change-password", a.changePassword)
 	mux.HandleFunc("POST /api/v1/auth/social/dev", a.devSocialLogin)
+	mux.HandleFunc("GET /api/v1/auth/oauth/google/start", a.googleOAuthStart)
+	mux.HandleFunc("GET /api/v1/auth/oauth/google/callback", a.googleOAuthCallback)
+	mux.HandleFunc("POST /api/v1/auth/oauth/exchange", a.oauthLoginExchange)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/v1/models", a.models)
 	mux.HandleFunc("GET /api/v1/pricing", a.pricing)

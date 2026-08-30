@@ -36,6 +36,7 @@ DELETE FROM user_projects;
 DELETE FROM user_companies;
 DELETE FROM sys_memberships;
 DELETE FROM sys_organizations;
+DELETE FROM sys_oauth_login_codes;
 DELETE FROM sys_sessions;
 DELETE FROM sys_oauth_accounts;
 DELETE FROM sys_users;

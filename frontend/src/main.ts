@@ -2365,6 +2365,10 @@ async function socialLogin(provider: string, selectedButton: HTMLButtonElement) 
   buttons.forEach((button) => { button.disabled = true; });
   selectedButton.classList.add("loading");
   setAuthMessage(`Connecting to ${providerName}...`);
+	if (provider === "google") {
+		window.location.assign(`${apiBase}/api/v1/auth/oauth/google/start`);
+		return;
+	}
   try {
     const auth = await request<AuthResponse>("/api/v1/auth/social/dev", {
       method: "POST",
@@ -2377,6 +2381,32 @@ async function socialLogin(provider: string, selectedButton: HTMLButtonElement) 
     buttons.forEach((button) => { button.disabled = false; });
     selectedButton.classList.remove("loading");
   }
+}
+
+async function completeOAuthRedirect() {
+	const url = new URL(window.location.href);
+	const oauthCode = url.searchParams.get("oauth_code");
+	const oauthError = url.searchParams.get("oauth_error");
+	if (!oauthCode && !oauthError) return;
+	url.searchParams.delete("oauth_code");
+	url.searchParams.delete("oauth_provider");
+	url.searchParams.delete("oauth_error");
+	window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+	openLogin();
+	if (oauthError) {
+		setAuthMessage(`Google login failed: ${oauthError}`, true);
+		return;
+	}
+	setAuthMessage("Completing Google login...");
+	try {
+		const auth = await request<AuthResponse>("/api/v1/auth/oauth/exchange", {
+			method: "POST",
+			body: JSON.stringify({ code: oauthCode })
+		});
+		completeAuth(auth, "Logged in with Google");
+	} catch (error) {
+		setAuthMessage(formatAuthError(error), true);
+	}
 }
 
 function setAuthMessage(message: string, isError = false) {
@@ -2811,3 +2841,4 @@ renderAuthUser();
 renderCreditAnalytics();
 setActiveTab(window.location.hash.slice(1) || "home");
 loadAll().catch(showError);
+void completeOAuthRedirect();

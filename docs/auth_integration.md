@@ -1,8 +1,8 @@
 # Google and Facebook Authentication Integration
 
-Model Market currently includes a development-only social login placeholder.
-Real Google and Facebook login requires OAuth applications, provider
-credentials, and backend authorization-code callback handlers.
+Model Market implements real Google OpenID Connect login and retains a
+development-only placeholder for Facebook and GitHub. Facebook still requires
+provider credentials and backend authorization-code callback handlers.
 
 Basic login testing does not normally require a paid cloud account. You do
 need developer applications with Google and Meta, and Meta requires a Facebook
@@ -31,11 +31,13 @@ including the scheme, hostname, port, path, case, and trailing slash.
 
 1. Open the [Google Cloud Console](https://console.cloud.google.com/).
 2. Create or select a Google Cloud project.
+   1. https://console.cloud.google.com/home/dashboard?project=modelapi-507015&organizationId=0
 3. Configure the OAuth consent screen.
 4. Select an external application unless access should be limited to one
    Google Workspace organization.
 5. Add the developers' Google accounts as test users.
 6. Open the credentials page and create an OAuth client.
+   1. https://console.cloud.google.com/auth/clients/create?organizationId=0&project=modelapi-507015
 7. Select **Web application** as the application type.
 8. Add this authorized redirect URI for local development:
 
@@ -43,7 +45,7 @@ including the scheme, hostname, port, path, case, and trailing slash.
    http://localhost:8080/api/v1/auth/oauth/google/callback
    ```
 
-9. Store the generated client ID and client secret in backend environment
+9.  Store the generated client ID and client secret in backend environment
    variables:
 
    ```env
@@ -53,6 +55,7 @@ including the scheme, hostname, port, path, case, and trailing slash.
    ```
 
 10. Request only the identity scopes needed for login:
+    1.  https://console.cloud.google.com/auth/scopes?organizationId=0&project=modelapi-507015
 
     ```text
     openid email profile
@@ -114,18 +117,24 @@ Reference:
 
 - [Facebook Login for Web](https://developers.facebook.com/docs/facebook-login/web/)
 
-## Backend Endpoints to Implement
+## Implemented Google Endpoints
 
 The backend should expose these routes:
 
 ```text
 GET /api/v1/auth/oauth/google/start
 GET /api/v1/auth/oauth/google/callback
+POST /api/v1/auth/oauth/exchange
+```
+
+Facebook remains to be implemented with equivalent start and callback routes:
+
+```text
 GET /api/v1/auth/oauth/facebook/start
 GET /api/v1/auth/oauth/facebook/callback
 ```
 
-The flow for each provider is:
+The implemented Google flow is:
 
 1. The frontend sends the browser to the provider's `start` endpoint.
 2. The backend generates a cryptographically random, short-lived `state`
@@ -136,10 +145,33 @@ The flow for each provider is:
 6. The backend exchanges the one-time authorization code for provider tokens.
 7. The backend retrieves and verifies the provider account ID and email.
 8. The backend creates or safely links `sys_users` and `sys_oauth_accounts`.
-9. The backend creates a Model Market session in `sys_sessions` using the
-   existing persistent session implementation.
-10. The backend redirects the browser to the frontend without leaving the
-    authorization code or provider tokens in the URL.
+9. The callback creates a two-minute, one-use Model Market login code and
+   redirects the browser to the frontend. Provider tokens never enter the URL.
+10. The frontend exchanges the one-use code, and the backend creates a Model
+    Market session using the existing persistent session implementation.
+
+The Google implementation also uses PKCE, verifies the signed ID token against
+Google's cached JWKS, and validates issuer, audience, authorized presenter,
+expiration, nonce, and verified email claims.
+
+## Enable Google Login Locally
+
+After configuring `.env` and registering the exact callback in Google Cloud,
+apply the schema additions without resetting existing development data:
+
+```sh
+sh -c '. scripts/load-db-env.sh dev; run_sql_file db/init_db.sql'
+```
+
+For a fresh disposable development database, `scripts/init_db.sh dev` followed
+by `scripts/populate_test_data.sh dev` is also valid, but the initializer resets
+the development schema and deletes its existing data.
+
+Restart the backend and frontend, open the login dialog, and select
+**Continue with Google**. A first-time verified Google identity receives a
+personal organization, project, wallet, and trial credits. If the verified
+email already belongs to a Model Market user, the Google identity is linked to
+that existing account.
 
 ## Account-Linking Rules
 

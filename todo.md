@@ -101,6 +101,10 @@ The requested MVP work delivered in the current implementation includes:
   browser bearer tokens, uses bcrypt for new/changed production passwords, and
   upgrades legacy password hashes after a successful login. Real OAuth and
   complete role-policy coverage remain open.
+- Item 2: Google OpenID Connect authorization-code login is implemented with
+  state, nonce, PKCE, cached JWKS signature verification, verified-email
+  account linking/provisioning, and a short-lived one-use frontend exchange
+  code. Facebook OAuth remains open.
 - Item 3: production browser routes now require a session and enforce user,
   organization, project, conversation, asset, and API-key membership checks at
   the HTTP boundary. Additional policy tests and company/admin query review

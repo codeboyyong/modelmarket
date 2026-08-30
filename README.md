@@ -27,6 +27,14 @@ The product direction is documented in:
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
+- [docs/auth_integration.md](docs/auth_integration.md)
+
+Real Google OpenID Connect login is available through
+`/api/v1/auth/oauth/google/start`. Configure `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, and the exactly registered `GOOGLE_REDIRECT_URI`, then
+apply `db/init_db.sql` so the short-lived OAuth exchange-code table is present.
+The flow uses state, nonce, PKCE, signed ID-token verification, safe
+account linking, and one-use frontend login-code exchange.
 
 ## Requirements
 

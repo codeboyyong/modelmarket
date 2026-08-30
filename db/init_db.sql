@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS sys_sessions (
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES sys_users(id)
 );
 
+-- System table: short-lived, one-use codes that move an OAuth login result
+-- from the backend callback to the frontend without exposing provider tokens.
+CREATE TABLE IF NOT EXISTS sys_oauth_login_codes (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  code_hash VARCHAR(255) NOT NULL UNIQUE,
+  provider VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_oauth_login_codes_user FOREIGN KEY (user_id) REFERENCES sys_users(id)
+);
+
 -- System table: tenant organizations that own projects and billing context.
 CREATE TABLE IF NOT EXISTS sys_organizations (
   id VARCHAR(64) PRIMARY KEY,
@@ -810,6 +822,7 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_user_api_keys_project ON user_api_keys(project_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_login_codes_expiry ON sys_oauth_login_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sys_users_company ON sys_users(company_id);
 CREATE INDEX IF NOT EXISTS idx_user_companies_owner ON user_companies(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_projects_company ON user_projects(company_id);

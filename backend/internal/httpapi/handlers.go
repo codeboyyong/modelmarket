@@ -74,6 +74,10 @@ func (a *App) devSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) devLogin(w http.ResponseWriter, r *http.Request) {
+	if !a.Config.DevMode {
+		writeJSON(w, http.StatusNotFound, response{"error": "not_found"})
+		return
+	}
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -178,6 +182,10 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) devSocialLogin(w http.ResponseWriter, r *http.Request) {
+	if !a.Config.DevMode {
+		writeJSON(w, http.StatusNotFound, response{"error": "not_found"})
+		return
+	}
 	var req struct {
 		Provider string `json:"provider"`
 	}
