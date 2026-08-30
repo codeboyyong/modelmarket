@@ -42,7 +42,7 @@ func main() {
 		if err := rows.Scan(&projectID, &raw); err != nil {
 			fail(err)
 		}
-		policy := retentionPolicy{ConversationDays: 30, AssetDays: 30}
+		policy := retentionPolicy{ConversationDays: 365, AssetDays: 365}
 		_ = json.Unmarshal([]byte(raw), &policy)
 		conversations, assets, err := expiredIDs(ctx, db, projectID, policy)
 		if err != nil {

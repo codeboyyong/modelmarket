@@ -216,6 +216,7 @@ GOOGLE_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth/google/callback
 FACEBOOK_CLIENT_ID=
 FACEBOOK_CLIENT_SECRET=
 FACEBOOK_REDIRECT_URI=http://localhost:8080/api/v1/auth/oauth/facebook/callback
+FACEBOOK_GRAPH_API_VERSION=v23.0
 ```
 
 Do not commit real values. The repository's `.env.example` should contain only

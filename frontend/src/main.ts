@@ -1292,7 +1292,7 @@ async function sendPrompt() {
     });
     const answer = data.choices?.[0]?.message?.content || "Response received from backend.";
     const artifactNote = data.artifacts?.length
-      ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. See Artifacts for the mock S3 download URL.`
+      ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. See Artifacts for the object-storage download URL.`
       : "";
     replaceWaitingMessage(waitingID, `${answer}${artifactNote}`);
     await loadSummary();
@@ -2365,8 +2365,8 @@ async function socialLogin(provider: string, selectedButton: HTMLButtonElement) 
   buttons.forEach((button) => { button.disabled = true; });
   selectedButton.classList.add("loading");
   setAuthMessage(`Connecting to ${providerName}...`);
-	if (provider === "google") {
-		window.location.assign(`${apiBase}/api/v1/auth/oauth/google/start`);
+	if (provider === "google" || provider === "facebook") {
+		window.location.assign(`${apiBase}/api/v1/auth/oauth/${provider}/start`);
 		return;
 	}
   try {
@@ -2386,6 +2386,7 @@ async function socialLogin(provider: string, selectedButton: HTMLButtonElement) 
 async function completeOAuthRedirect() {
 	const url = new URL(window.location.href);
 	const oauthCode = url.searchParams.get("oauth_code");
+	const oauthProvider = url.searchParams.get("oauth_provider") || "OAuth";
 	const oauthError = url.searchParams.get("oauth_error");
 	if (!oauthCode && !oauthError) return;
 	url.searchParams.delete("oauth_code");
@@ -2394,16 +2395,16 @@ async function completeOAuthRedirect() {
 	window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 	openLogin();
 	if (oauthError) {
-		setAuthMessage(`Google login failed: ${oauthError}`, true);
+		setAuthMessage(`${oauthProvider} login failed: ${oauthError}`, true);
 		return;
 	}
-	setAuthMessage("Completing Google login...");
+	setAuthMessage(`Completing ${oauthProvider} login...`);
 	try {
 		const auth = await request<AuthResponse>("/api/v1/auth/oauth/exchange", {
 			method: "POST",
 			body: JSON.stringify({ code: oauthCode })
 		});
-		completeAuth(auth, "Logged in with Google");
+		completeAuth(auth, `Logged in with ${oauthProvider}`);
 	} catch (error) {
 		setAuthMessage(formatAuthError(error), true);
 	}

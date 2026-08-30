@@ -31,7 +31,7 @@ Open:
 4. Pick an image, video, or audio model.
 5. Open output parameters and choose size/resolution/length options.
 6. Send a prompt.
-7. Confirm the Artifacts section shows a generated item and a mock S3 download URL.
+7. Confirm the Artifacts section shows a generated item and a local object-storage download URL.
 8. Open Credit usage or Pricing to confirm balance and usage changed.
 9. Log in as `admin@example.com` and open Admin for system route/config/balance overview.
 

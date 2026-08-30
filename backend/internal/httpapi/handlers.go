@@ -1189,7 +1189,7 @@ func (a *App) createStripeCheckoutSession(ctx context.Context, secretKey, purcha
 		return stripeCheckoutSession{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return stripeCheckoutSession{}, fmt.Errorf("stripe status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return stripeCheckoutSession{}, fmt.Errorf("stripe status %d request_id=%s", resp.StatusCode, resp.Header.Get("Request-Id"))
 	}
 	var session stripeCheckoutSession
 	if err := json.Unmarshal(body, &session); err != nil {
@@ -1552,7 +1552,7 @@ func (a *App) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := a.DB.ExecContext(r.Context(), `
 		insert into user_projects(id, organization_id, name, slug, environment, retention_policy)
-		values($1, $2, $3, $4, 'dev', '{"conversation_days":30,"asset_days":30}')`, id, organizationID, name, slug)
+		values($1, $2, $3, $4, 'dev', '{"conversation_days":365,"asset_days":365}')`, id, organizationID, name, slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1813,6 +1813,11 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
+		if storageProvider == "s3" && a.Config.AssetPublicURL == "" {
+			if refreshed, refreshErr := a.objectDownloadURL(r.Context(), bucketName, objectKey); refreshErr == nil {
+				downloadURL = refreshed
+			}
+		}
 		items = append(items, response{"id": id, "conversation_id": conversationID, "branch_id": branchID, "asset_type": assetType, "asset_origin": assetOrigin, "storage_path": storagePath, "storage_provider": storageProvider, "bucket_name": bucketName, "object_key": objectKey, "download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
 	}
 	writeJSON(w, http.StatusOK, response{"assets": items})
@@ -1852,13 +1857,22 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 	bucket := a.Config.AssetBucket
 	objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", req.ProjectID, "uploads", assetID, filename}, "/"), "/")
 	storagePath := "s3://" + bucket + "/" + objectKey
-	downloadURL := assetDownloadURL(a.Config.AssetPublicURL, bucket, objectKey)
-	uploadURL := downloadURL
+	downloadURL, err := a.objectDownloadURL(r.Context(), bucket, objectKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": "storage_url_failed"})
+		return
+	}
+	uploadURL, err := a.objectUploadURL(r.Context(), objectKey, contentType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": "storage_url_failed"})
+		return
+	}
+	storageProvider := a.storageProvider()
 
-	_, err := a.DB.ExecContext(r.Context(), `
+	_, err = a.DB.ExecContext(r.Context(), `
 		insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, metadata)
-		values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'uploaded', $6, 's3', $7, $8, $9, $10, $11, $12)`,
-		assetID, req.ProjectID, req.ConversationID, req.BranchID, assetType, storagePath, bucket, objectKey, downloadURL, contentType, req.SizeBytes, fmt.Sprintf(`{"filename":%q,"upload_mode":"presigned"}`, req.Filename))
+		values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'uploaded', $6, $7, $8, $9, $10, $11, $12, $13)`,
+		assetID, req.ProjectID, req.ConversationID, req.BranchID, assetType, storagePath, storageProvider, bucket, objectKey, downloadURL, contentType, req.SizeBytes, fmt.Sprintf(`{"filename":%q,"upload_mode":"presigned"}`, req.Filename))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -1886,7 +1900,7 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, response{
 		"asset": response{
 			"id": assetID, "project_id": req.ProjectID, "conversation_id": req.ConversationID, "branch_id": req.BranchID, "asset_type": assetType, "asset_origin": "uploaded",
-			"storage_path": storagePath, "storage_provider": "s3", "bucket_name": bucket, "object_key": objectKey,
+			"storage_path": storagePath, "storage_provider": storageProvider, "bucket_name": bucket, "object_key": objectKey,
 			"download_url": downloadURL, "mime_type": contentType, "size_bytes": req.SizeBytes,
 		},
 		"message_id": messageID,
@@ -2454,12 +2468,15 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 		bucket := a.Config.AssetBucket
 		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, filename}, "/"), "/")
 		storagePath := "s3://" + bucket + "/" + objectKey
-		downloadURL := assetDownloadURL(a.Config.AssetPublicURL, bucket, objectKey)
+		downloadURL, err := a.objectDownloadURL(ctx, bucket, objectKey)
+		if err != nil {
+			return nil, err
+		}
 		content := mockGeneratedAssetContent(route, parameters, prompt, assetID, i+1, count)
 		if route.ModelModality == "image" {
 			content = mockGeneratedImageSVG(route, parameters, prompt, assetID)
 		}
-		sizeBytes, err := a.writeMockS3Object(objectKey, []byte(content))
+		sizeBytes, err := a.writeGeneratedObject(ctx, objectKey, []byte(content), mimeType)
 		if err != nil {
 			return nil, err
 		}
@@ -2478,15 +2495,15 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 		})
 		_, err = a.DB.ExecContext(ctx, `
 			insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata)
-			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, 's3', $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-			assetID, projectID, conversationID, branchID, route.ModelModality, storagePath, bucket, objectKey, downloadURL, mimeType, sizeBytes, inferenceRequestID, assetCharge, assetCost, truncateString(string(metadataRaw), 3900))
+			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+			assetID, projectID, conversationID, branchID, route.ModelModality, storagePath, a.storageProvider(), bucket, objectKey, downloadURL, mimeType, sizeBytes, inferenceRequestID, assetCharge, assetCost, truncateString(string(metadataRaw), 3900))
 		if err != nil {
 			return nil, err
 		}
 		artifacts = append(artifacts, response{
 			"id": assetID, "project_id": projectID, "conversation_id": conversationID, "branch_id": branchID,
 			"asset_type": route.ModelModality, "asset_origin": "generated",
-			"storage_path": storagePath, "storage_provider": "s3", "bucket_name": bucket, "object_key": objectKey,
+			"storage_path": storagePath, "storage_provider": a.storageProvider(), "bucket_name": bucket, "object_key": objectKey,
 			"download_url": downloadURL, "mime_type": mimeType, "size_bytes": sizeBytes,
 			"inference_request_id": inferenceRequestID, "customer_charge": assetCharge, "provider_cost": assetCost,
 		})

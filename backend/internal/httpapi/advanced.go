@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -333,15 +337,27 @@ func (a *App) refundPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var walletID, status string
+	var walletID, status, provider, providerPaymentID string
 	var amount, refunded int64
-	if err := tx.QueryRowContext(r.Context(), `select wallet_id, amount_cents, refunded_amount_cents, status from user_payments where id = $1 for update`, req.PaymentID).Scan(&walletID, &amount, &refunded, &status); err != nil {
+	if err := tx.QueryRowContext(r.Context(), `select wallet_id, amount_cents, refunded_amount_cents, status, provider, coalesce(provider_payment_id,'') from user_payments where id = $1 for update`, req.PaymentID).Scan(&walletID, &amount, &refunded, &status, &provider, &providerPaymentID); err != nil {
 		writeJSON(w, http.StatusNotFound, response{"error": "payment_not_found"})
 		return
 	}
 	if req.AmountCents > amount-refunded {
 		writeJSON(w, http.StatusConflict, response{"error": "refund_exceeds_payment"})
 		return
+	}
+	providerRefundID := ""
+	if provider == "stripe" {
+		if providerPaymentID == "" {
+			writeJSON(w, http.StatusConflict, response{"error": "stripe_payment_intent_missing"})
+			return
+		}
+		providerRefundID, err = a.createStripeRefund(r.Context(), providerPaymentID, req.PaymentID, refunded, req.AmountCents)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, response{"error": "stripe_refund_failed"})
+			return
+		}
 	}
 	ratio, err := a.creditRatio(r.Context())
 	if err != nil {
@@ -368,7 +384,9 @@ func (a *App) refundPayment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, response{"error": err.Error()})
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1, $2, 'refund', $3, 'paid', 'posted', 'payment refund', $4, '{}')`, "ledger_"+randomHex(8), walletID, -credits, "refund_"+req.PaymentID+"_"+randomHex(6)); err != nil {
+	refundKey := fmt.Sprintf("refund_%s_%d_%d", req.PaymentID, refunded, req.AmountCents)
+	refundMetadata, _ := json.Marshal(response{"provider": provider, "provider_refund_id": providerRefundID})
+	if _, err = tx.ExecContext(r.Context(), `insert into user_ledger_transactions(id, wallet_id, transaction_type, amount, credit_type, status, reason, idempotency_key, metadata) values($1, $2, 'refund', $3, 'paid', 'posted', 'payment refund', $4, $5)`, "ledger_"+randomHex(8), walletID, -credits, refundKey, string(refundMetadata)); err != nil {
 		writeJSON(w, 500, response{"error": err.Error()})
 		return
 	}
@@ -376,7 +394,42 @@ func (a *App) refundPayment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, response{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, response{"payment_id": req.PaymentID, "status": newStatus, "refunded_amount_cents": newRefunded, "credits_reversed": credits})
+	writeJSON(w, http.StatusOK, response{"payment_id": req.PaymentID, "status": newStatus, "refunded_amount_cents": newRefunded, "credits_reversed": credits, "provider_refund_id": providerRefundID})
+}
+
+func (a *App) createStripeRefund(ctx context.Context, paymentIntent, paymentID string, alreadyRefunded, amountCents int64) (string, error) {
+	secret := strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY"))
+	if secret == "" {
+		return "", errors.New("STRIPE_SECRET_KEY is not set")
+	}
+	form := url.Values{"payment_intent": {paymentIntent}, "amount": {strconv.FormatInt(amountCents, 10)}, "metadata[model_market_payment_id]": {paymentID}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.stripe.com/v1/refunds", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Idempotency-Key", fmt.Sprintf("mm-refund-%s-%d-%d", paymentID, alreadyRefunded, amountCents))
+	client := a.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var decoded struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("stripe refund returned %d request_id=%s", resp.StatusCode, resp.Header.Get("Request-Id"))
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&decoded) != nil || decoded.ID == "" {
+		return "", errors.New("invalid stripe refund response")
+	}
+	return decoded.ID, nil
 }
 
 type creditReservation struct {

@@ -18,11 +18,12 @@ type RedisPinger interface {
 }
 
 type App struct {
-	Config config.Config
-	DB     *sql.DB
-	Redis  RedisPinger
-	Logger *slog.Logger
-	Client *http.Client
+	Config      config.Config
+	DB          *sql.DB
+	Redis       RedisPinger
+	Logger      *slog.Logger
+	Client      *http.Client
+	ObjectStore ObjectStore
 
 	credentialPoolMu   sync.Mutex
 	credentialPoolNext map[string]uint64
@@ -50,6 +51,8 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/social/dev", a.devSocialLogin)
 	mux.HandleFunc("GET /api/v1/auth/oauth/google/start", a.googleOAuthStart)
 	mux.HandleFunc("GET /api/v1/auth/oauth/google/callback", a.googleOAuthCallback)
+	mux.HandleFunc("GET /api/v1/auth/oauth/facebook/start", a.facebookOAuthStart)
+	mux.HandleFunc("GET /api/v1/auth/oauth/facebook/callback", a.facebookOAuthCallback)
 	mux.HandleFunc("POST /api/v1/auth/oauth/exchange", a.oauthLoginExchange)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/v1/models", a.models)

@@ -28,10 +28,11 @@ The product direction is documented in:
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
 - [docs/auth_integration.md](docs/auth_integration.md)
+- [docs/object-storage.md](docs/object-storage.md)
 
-Real Google OpenID Connect login is available through
-`/api/v1/auth/oauth/google/start`. Configure `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, and the exactly registered `GOOGLE_REDIRECT_URI`, then
+Real Google OpenID Connect and Facebook Login flows are available through
+`/api/v1/auth/oauth/google/start` and `/api/v1/auth/oauth/facebook/start`.
+Configure the corresponding client ID, secret, and exactly registered redirect URI, then
 apply `db/init_db.sql` so the short-lived OAuth exchange-code table is present.
 The flow uses state, nonce, PKCE, signed ID-token verification, safe
 account linking, and one-use frontend login-code exchange.
@@ -100,6 +101,12 @@ Run the local E2E smoke after the backend, frontend, and database are up:
 scripts/demo-smoke.sh dev
 ```
 
+Verify configured OAuth, payment mode, and object storage together:
+
+```sh
+scripts/verify-integrations.sh dev
+```
+
 To enable the direct OpenAI route, set `OPENAI_API_KEY` in `.env`, restart the
 backend so it receives the key, and reload the current dev seed data:
 
@@ -123,6 +130,9 @@ Apply the configured `conversation_days` and `asset_days` project policies:
 ```sh
 scripts/cleanup-retention.sh dev --apply
 ```
+
+New and seeded projects currently retain conversations and standalone assets
+for 365 days.
 
 The smoke creates a mock payment purchase, creates a project API key, generates a mock image artifact, downloads it through the local mock S3 endpoint, and verifies the database row.
 

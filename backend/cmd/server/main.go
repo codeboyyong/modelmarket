@@ -44,6 +44,14 @@ func main() {
 		Redis:  redisHealth,
 		Logger: logger,
 	}
+	if cfg.ObjectStorageProvider == "s3" {
+		store, storageErr := httpapi.NewS3ObjectStore(context.Background(), cfg)
+		if storageErr != nil {
+			logger.Error("s3_initialization_failed", "error", storageErr)
+			os.Exit(1)
+		}
+		app.ObjectStore = store
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

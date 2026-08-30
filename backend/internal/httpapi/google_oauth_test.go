@@ -97,7 +97,7 @@ func TestOAuthLoginExchangeConsumesOneTimeCode(t *testing.T) {
 	defer cleanup()
 	code := "oauth_test_code"
 	mock.ExpectBegin()
-	mock.ExpectQuery("select c.user_id,u.email").WithArgs(sessionTokenHash(code)).WillReturnRows(sqlmock.NewRows([]string{"user_id", "email"}).AddRow("user-1", "person@example.com"))
+	mock.ExpectQuery("select c.user_id,u.email").WithArgs(sessionTokenHash(code)).WillReturnRows(sqlmock.NewRows([]string{"user_id", "email", "provider"}).AddRow("user-1", "person@example.com", "google"))
 	mock.ExpectExec("delete from sys_oauth_login_codes").WithArgs(sessionTokenHash(code)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery("select u.id, u.name, u.user_type").WithArgs("person@example.com").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "user_type", "company_id", "company_name", "org_id", "project_id"}).AddRow("user-1", "Person", "individual_consumer", "", "", "org-1", "project-1"))

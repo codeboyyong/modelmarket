@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -88,9 +87,7 @@ func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, key := range objectKeys {
-		if path, err := a.objectStoragePath(key); err == nil {
-			_ = os.Remove(path)
-		}
+		_ = a.deleteStoredObject(r.Context(), key)
 	}
 	writeJSON(w, http.StatusOK, response{"status": "deleted", "id": id, "assets_deleted": len(objectKeys)})
 }
@@ -188,9 +185,7 @@ func (a *App) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if objectKey != "" {
-		if path, err := a.objectStoragePath(objectKey); err == nil {
-			_ = os.Remove(path)
-		}
+		_ = a.deleteStoredObject(r.Context(), objectKey)
 	}
 	writeJSON(w, http.StatusOK, response{"status": "deleted", "id": id})
 }

@@ -12,24 +12,29 @@ import (
 )
 
 type Config struct {
-	HTTPAddr         string
-	AppEnv           string
-	DBDriver         string
-	DatabaseURL      string
-	DBHost           string
-	DBPort           string
-	DBName           string
-	DBUser           string
-	DBPassword       string
-	DBSSLMode        string
-	RedisEnabled     bool
-	RedisAddr        string
-	DevMode          bool
-	ObjectStorageDir string
-	AssetBucket      string
-	AssetPublicURL   string
-	LogLevelName     string
-	PublicURL        string
+	HTTPAddr              string
+	AppEnv                string
+	DBDriver              string
+	DatabaseURL           string
+	DBHost                string
+	DBPort                string
+	DBName                string
+	DBUser                string
+	DBPassword            string
+	DBSSLMode             string
+	RedisEnabled          bool
+	RedisAddr             string
+	DevMode               bool
+	ObjectStorageDir      string
+	ObjectStorageProvider string
+	AssetBucket           string
+	AssetPublicURL        string
+	S3Region              string
+	S3Endpoint            string
+	S3ForcePathStyle      bool
+	S3PresignMinutes      int
+	LogLevelName          string
+	PublicURL             string
 }
 
 func Load() Config {
@@ -47,24 +52,29 @@ func Load() Config {
 	}
 
 	return Config{
-		HTTPAddr:         env("HTTP_ADDR", ":8080"),
-		AppEnv:           appEnv,
-		DBDriver:         env("MM_DB_DRIVER", "postgres"),
-		DatabaseURL:      databaseURL,
-		DBHost:           dbHost,
-		DBPort:           dbPort,
-		DBName:           dbName,
-		DBUser:           dbUser,
-		DBPassword:       dbPassword,
-		DBSSLMode:        dbSSLMode,
-		RedisEnabled:     envBool("REDIS_ENABLED", false),
-		RedisAddr:        env("REDIS_ADDR", "localhost:6379"),
-		DevMode:          envBool("DEV_MODE", true),
-		ObjectStorageDir: env("OBJECT_STORAGE_DIR", "tmp/storage"),
-		AssetBucket:      env("MM_ASSET_BUCKET", "model-market-dev-assets"),
-		AssetPublicURL:   strings.TrimRight(env("MM_ASSET_PUBLIC_URL", ""), "/"),
-		LogLevelName:     env("LOG_LEVEL", "info"),
-		PublicURL:        env("PUBLIC_URL", "http://localhost:3000"),
+		HTTPAddr:              env("HTTP_ADDR", ":8080"),
+		AppEnv:                appEnv,
+		DBDriver:              env("MM_DB_DRIVER", "postgres"),
+		DatabaseURL:           databaseURL,
+		DBHost:                dbHost,
+		DBPort:                dbPort,
+		DBName:                dbName,
+		DBUser:                dbUser,
+		DBPassword:            dbPassword,
+		DBSSLMode:             dbSSLMode,
+		RedisEnabled:          envBool("REDIS_ENABLED", false),
+		RedisAddr:             env("REDIS_ADDR", "localhost:6379"),
+		DevMode:               envBool("DEV_MODE", true),
+		ObjectStorageDir:      env("OBJECT_STORAGE_DIR", "tmp/storage"),
+		ObjectStorageProvider: strings.ToLower(env("OBJECT_STORAGE_PROVIDER", "local")),
+		AssetBucket:           env("MM_ASSET_BUCKET", "model-market-dev-assets"),
+		AssetPublicURL:        strings.TrimRight(env("MM_ASSET_PUBLIC_URL", ""), "/"),
+		S3Region:              env("AWS_REGION", "us-east-1"),
+		S3Endpoint:            strings.TrimRight(env("S3_ENDPOINT_URL", ""), "/"),
+		S3ForcePathStyle:      envBool("S3_FORCE_PATH_STYLE", false),
+		S3PresignMinutes:      envInt("S3_PRESIGN_MINUTES", 15),
+		LogLevelName:          env("LOG_LEVEL", "info"),
+		PublicURL:             env("PUBLIC_URL", "http://localhost:3000"),
 	}
 }
 
@@ -176,4 +186,13 @@ func envBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

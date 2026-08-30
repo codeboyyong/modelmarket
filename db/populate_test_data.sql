@@ -101,11 +101,11 @@ INSERT INTO sys_memberships (id, user_id, organization_id, role) VALUES
   ('membership-corp-producer', 'user-corp-producer', 'org-acme', 'developer');
 
 INSERT INTO user_projects (id, organization_id, company_id, name, slug, environment, retention_policy) VALUES
-  ('project-demo', 'org-demo', NULL, 'Demo Project', 'demo-project', 'dev', '{"conversation_days":30,"asset_days":30}'),
-  ('project-image-studio', 'org-demo', NULL, 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
-  ('project-video-lab', 'org-demo', NULL, 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":30,"asset_days":30}'),
-  ('project-acme-brand', 'org-acme', 'company-acme', 'Acme Brand Studio', 'acme-brand-studio', 'dev', '{"conversation_days":90,"asset_days":90}'),
-  ('project-acme-video', 'org-acme', 'company-acme', 'Acme Video Team', 'acme-video-team', 'dev', '{"conversation_days":90,"asset_days":90}');
+  ('project-demo', 'org-demo', NULL, 'Demo Project', 'demo-project', 'dev', '{"conversation_days":365,"asset_days":365}'),
+  ('project-image-studio', 'org-demo', NULL, 'Image Studio Demo', 'image-studio-demo', 'dev', '{"conversation_days":365,"asset_days":365}'),
+  ('project-video-lab', 'org-demo', NULL, 'Video Lab Demo', 'video-lab-demo', 'dev', '{"conversation_days":365,"asset_days":365}'),
+  ('project-acme-brand', 'org-acme', 'company-acme', 'Acme Brand Studio', 'acme-brand-studio', 'dev', '{"conversation_days":365,"asset_days":365}'),
+  ('project-acme-video', 'org-acme', 'company-acme', 'Acme Video Team', 'acme-video-team', 'dev', '{"conversation_days":365,"asset_days":365}');
 
 INSERT INTO user_api_keys (id, project_id, name, prefix, key_hash, scopes, status) VALUES
   ('api-key-demo', 'project-demo', 'Seeded development key', 'mk_seeded', 'seeded-key-hash-replace-before-real-use', 'models:read,chat:create', 'active'),

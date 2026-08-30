@@ -149,8 +149,8 @@ func (a *App) oauthLoginExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var userID, email string
-	err = tx.QueryRowContext(r.Context(), `select c.user_id,u.email from sys_oauth_login_codes c join sys_users u on u.id = c.user_id where c.code_hash = $1 and c.expires_at > current_timestamp for update`, sessionTokenHash(strings.TrimSpace(req.Code))).Scan(&userID, &email)
+	var userID, email, provider string
+	err = tx.QueryRowContext(r.Context(), `select c.user_id,u.email,c.provider from sys_oauth_login_codes c join sys_users u on u.id = c.user_id where c.code_hash = $1 and c.expires_at > current_timestamp for update`, sessionTokenHash(strings.TrimSpace(req.Code))).Scan(&userID, &email, &provider)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_or_expired_login_code"})
 		return
@@ -168,7 +168,7 @@ func (a *App) oauthLoginExchange(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": "login_exchange_failed"})
 		return
 	}
-	login["provider"] = "google"
+	login["provider"] = provider
 	writeJSON(w, http.StatusOK, login)
 }
 
@@ -357,7 +357,7 @@ func (a *App) linkGoogleIdentity(ctx context.Context, claims googleIDClaims) (st
 		if _, err = tx.ExecContext(ctx, `insert into sys_memberships(id,user_id,organization_id,role) values($1,$2,$3,'owner')`, "membership_"+randomHex(8), userID, orgID); err != nil {
 			return "", err
 		}
-		if _, err = tx.ExecContext(ctx, `insert into user_projects(id,organization_id,name,slug,environment,retention_policy) values($1,$2,'My Project',$3,'dev','{"conversation_days":30,"asset_days":30}')`, projectID, orgID, "my-project-"+randomHex(6)); err != nil {
+		if _, err = tx.ExecContext(ctx, `insert into user_projects(id,organization_id,name,slug,environment,retention_policy) values($1,$2,'My Project',$3,'dev','{"conversation_days":365,"asset_days":365}')`, projectID, orgID, "my-project-"+randomHex(6)); err != nil {
 			return "", err
 		}
 		if _, err = tx.ExecContext(ctx, `insert into user_wallets(id,project_id,paid_credits,promotional_credits) values($1,$2,0,1000)`, "wallet_"+randomHex(8), projectID); err != nil {

@@ -40,6 +40,21 @@ STRIPE_WEBHOOK_SECRET=
 PUBLIC_URL=http://localhost:3000
 ```
 
+Real refunds call Stripe's `/v1/refunds` endpoint first with a deterministic
+idempotency key. Credits and the local refund ledger are changed only after
+Stripe accepts the refund.
+
+For local webhook forwarding:
+
+```sh
+stripe listen --forward-to localhost:8080/api/v1/payments/stripe/webhook
+```
+
+Copy the printed `whsec_...` value to `STRIPE_WEBHOOK_SECRET`. To switch a
+seeded database from mock to Stripe mode, update `payment_provider_mode` in
+`sys_config` to `stripe`; the database setting intentionally takes precedence
+over `PAYMENT_PROVIDER_MODE`.
+
 `payment_provider_mode` is read from `sys_config`. If the config row is missing, the backend falls back to `PAYMENT_PROVIDER_MODE`, then `mock`.
 
 ## Mock Flow
