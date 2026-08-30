@@ -13,12 +13,12 @@ import (
 )
 
 type providerAdapter interface {
-	Complete(context.Context, selectedModelRoute, []chatMessage) (upstreamChatResult, error)
+	Complete(context.Context, selectedModelRoute, []chatMessage, response) (upstreamChatResult, error)
 }
 
 type mockProviderAdapter struct{}
 
-func (mockProviderAdapter) Complete(_ context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
+func (mockProviderAdapter) Complete(_ context.Context, route selectedModelRoute, messages []chatMessage, _ response) (upstreamChatResult, error) {
 	content := "Mock response from " + route.UpstreamModelID + " via " + route.ChannelName
 	if len(messages) > 0 {
 		content = "Mock response to: " + messages[len(messages)-1].Text()
@@ -28,13 +28,13 @@ func (mockProviderAdapter) Complete(_ context.Context, route selectedModelRoute,
 
 type geminiProviderAdapter struct{ app *App }
 
-func (p geminiProviderAdapter) Complete(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
+func (p geminiProviderAdapter) Complete(ctx context.Context, route selectedModelRoute, messages []chatMessage, _ response) (upstreamChatResult, error) {
 	return p.app.callGeminiGenerateContent(ctx, route, messages)
 }
 
 type openAICompatibleProviderAdapter struct{ app *App }
 
-func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
+func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route selectedModelRoute, messages []chatMessage, parameters response) (upstreamChatResult, error) {
 	credentialRef := strings.TrimSpace(route.CredentialRef)
 	if credentialRef == "" {
 		credentialRef = "OPENAI_API_KEY"
@@ -47,14 +47,26 @@ func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route sel
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	}
-	payload := struct {
-		Model    string          `json:"model"`
-		Messages []openAIMessage `json:"messages"`
-	}{Model: route.UpstreamModelID}
+	payload := response{"model": route.UpstreamModelID, "messages": []openAIMessage{}}
+	openAIMessages := []openAIMessage{}
 	for _, message := range messages {
 		text := strings.TrimSpace(message.Text())
 		if text != "" {
-			payload.Messages = append(payload.Messages, openAIMessage{Role: message.Role, Content: text})
+			openAIMessages = append(openAIMessages, openAIMessage{Role: message.Role, Content: text})
+		}
+	}
+	payload["messages"] = openAIMessages
+	maxCompletionTokens := intParameter(parameters, "max_completion_tokens", intParameter(parameters, "max_tokens", 1024))
+	if maxCompletionTokens < 1 {
+		maxCompletionTokens = 1024
+	}
+	if maxCompletionTokens > 32768 {
+		maxCompletionTokens = 32768
+	}
+	payload["max_completion_tokens"] = maxCompletionTokens
+	for _, key := range []string{"temperature", "tools", "tool_choice", "response_format"} {
+		if value, ok := parameters[key]; ok {
+			payload[key] = value
 		}
 	}
 	raw, err := json.Marshal(payload)
@@ -90,7 +102,7 @@ func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route sel
 		return upstreamChatResult{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return upstreamChatResult{}, fmt.Errorf("provider_http_%d: %s", resp.StatusCode, truncateString(string(body), 500))
+		return upstreamChatResult{}, fmt.Errorf("provider_http_%d request_id=%s", resp.StatusCode, resp.Header.Get("x-request-id"))
 	}
 	var decoded struct {
 		ID      string `json:"id"`

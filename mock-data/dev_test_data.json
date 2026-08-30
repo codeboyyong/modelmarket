@@ -35,16 +35,63 @@
       }
     },
     {
-      "slug": "openai-placeholder",
-      "name": "OpenAI Placeholder",
-      "endpoint_url": "https://api.openai.com",
+      "slug": "openai",
+      "name": "OpenAI",
+      "endpoint_url": "https://api.openai.com/v1",
       "metadata": {
         "credential_ref": "OPENAI_API_KEY",
-        "enabled_by_default": false
+        "enabled_by_default": true
       }
     }
   ],
   "models": [
+    {
+      "provider_slug": "openai",
+      "slug": "openai/gpt-4.1-mini",
+      "name": "OpenAI: GPT-4.1 Mini",
+      "modality": "chat",
+      "context_window": 1047576,
+      "capabilities": {
+        "chat": true,
+        "streaming": true,
+        "image_input": true,
+        "tools": true,
+        "structured_output": true
+      },
+      "profile": {
+        "slug": "openai-gpt-4-1-mini-default",
+        "name": "OpenAI: GPT-4.1 Mini Default",
+        "system_prompt": "You are a helpful, concise assistant routed directly through OpenAI.",
+        "default_parameters": {
+          "temperature": 0.4,
+          "max_tokens": 1024
+        }
+      },
+      "price_rules": [
+        {
+          "price_seq_id": 1,
+          "pricing_variant": "standard",
+          "price_type": "input",
+          "price_unit": "1k_tokens",
+          "price": 0.05,
+          "currency": "CREDIT",
+          "provider_price": 0.0004,
+          "provider_currency": "USD",
+          "price_metadata": {"source_rate_per_million_usd": 0.4, "markup": 1.25}
+        },
+        {
+          "price_seq_id": 2,
+          "pricing_variant": "standard",
+          "price_type": "output",
+          "price_unit": "1k_tokens",
+          "price": 0.2,
+          "currency": "CREDIT",
+          "provider_price": 0.0016,
+          "provider_currency": "USD",
+          "price_metadata": {"source_rate_per_million_usd": 1.6, "markup": 1.25}
+        }
+      ]
+    },
     {
       "provider_slug": "mock-provider",
       "slug": "mock-chat",

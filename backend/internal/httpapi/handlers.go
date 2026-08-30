@@ -2126,14 +2126,14 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}()
 	failedRoutes := []selectedModelRoute{}
 	failedMessages := []string{}
-	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages)
+	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages, req.Parameters)
 	if err != nil {
 		failedRoutes = append(failedRoutes, route)
 		failedMessages = append(failedMessages, err.Error())
 		fallback, fallbackErr := a.selectFallbackModelRoute(r.Context(), req.Model, "default", route.ID)
 		if fallbackErr == nil {
 			route = fallback
-			upstream, err = a.runChatUpstream(r.Context(), route, req.Messages)
+			upstream, err = a.runChatUpstream(r.Context(), route, req.Messages, req.Parameters)
 		}
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, response{"error": response{"message": err.Error(), "type": "server_error", "code": "upstream_failed"}, "provider": route.ProviderSlug, "channel_id": route.ChannelID, "attempts": len(failedRoutes)})
@@ -2618,8 +2618,8 @@ type upstreamChatResult struct {
 	ProviderRequestID string
 }
 
-func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {
-	return a.providerAdapter(route).Complete(ctx, route, messages)
+func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, messages []chatMessage, parameters response) (upstreamChatResult, error) {
+	return a.providerAdapter(route).Complete(ctx, route, messages, parameters)
 }
 
 func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModelRoute, messages []chatMessage) (upstreamChatResult, error) {

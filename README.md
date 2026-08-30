@@ -100,6 +100,17 @@ Run the local E2E smoke after the backend, frontend, and database are up:
 scripts/demo-smoke.sh dev
 ```
 
+To enable the direct OpenAI route, set `OPENAI_API_KEY` in `.env`, restart the
+backend so it receives the key, and reload the current dev seed data:
+
+```sh
+scripts/populate_test_data.sh dev
+scripts/openai-smoke.sh dev
+```
+
+The OpenAI smoke creates a project API key and sends one small, billable request
+through Model Market using `openai/gpt-4.1-mini`. It never prints either API key.
+
 Preview conversation and standalone-asset retention cleanup without deleting
 anything:
 
