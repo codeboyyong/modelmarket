@@ -45,7 +45,10 @@ services:
       REDIS_ADDR: "redis:6379"
       DEV_MODE: "true"
       OBJECT_STORAGE_DIR: "/tmp/model-market-storage"
-      MM_ASSET_PUBLIC_URL: "http://localhost:8080/api/v1/mock-s3"
+      # An explicitly empty value enables private S3/MinIO presigned GET URLs.
+      # The `-` form preserves an empty value; `:-` would replace it with the
+      # local mock URL.
+      MM_ASSET_PUBLIC_URL: "${MM_ASSET_PUBLIC_URL-http://localhost:8080/api/v1/mock-s3}"
       LOG_LEVEL: "info"
       PUBLIC_URL: "http://localhost:3000"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
