@@ -807,7 +807,7 @@ async function loadConversationMessages() {
       data.messages
         .map((message) => renderConversationMessage(message))
         .join("") || "<div class=\"message assistant\">This conversation is empty. Send a prompt to start.</div>";
-    transcript.scrollTop = transcript.scrollHeight;
+    scrollTranscriptToBottom();
   } catch (error) {
     transcript.innerHTML = `<div class="message assistant">${escapeHTML(error instanceof Error ? error.message : String(error))}</div>`;
   }
@@ -1336,14 +1336,21 @@ async function uploadAssetFile(file: File) {
 function appendMessage(role: "user" | "assistant", content: string) {
   const transcript = $("chatTranscript");
   transcript.insertAdjacentHTML("beforeend", `<div class="message ${role}">${renderMessageContent(role, content)}</div>`);
-  transcript.scrollTop = transcript.scrollHeight;
+  scrollTranscriptToBottom();
+}
+
+function scrollTranscriptToBottom() {
+  const transcript = $("chatTranscript");
+  requestAnimationFrame(() => {
+    transcript.scrollTop = transcript.scrollHeight;
+  });
 }
 
 function appendWaitingMessage() {
   const id = `waiting-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const transcript = $("chatTranscript");
   transcript.insertAdjacentHTML("beforeend", `<div class="message assistant pending-message" id="${id}" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Waiting for model response</span></div>`);
-  transcript.scrollTop = transcript.scrollHeight;
+  scrollTranscriptToBottom();
   return id;
 }
 
@@ -1352,6 +1359,7 @@ function replaceWaitingMessage(id: string, content: string) {
   if (message) {
     message.className = "message assistant";
     message.innerHTML = renderMarkdown(content);
+    scrollTranscriptToBottom();
     return;
   }
   appendMessage("assistant", content);

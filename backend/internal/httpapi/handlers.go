@@ -2248,7 +2248,7 @@ func estimateChatUsage(route selectedModelRoute, parameters response, messages [
 	}
 	return upstreamChatResult{
 		PromptTokens:     promptTokens,
-		CompletionTokens: int(intParameter(parameters, "max_tokens", 512)),
+		CompletionTokens: int(intParameter(parameters, "max_completion_tokens", intParameter(parameters, "max_tokens", 512))),
 	}
 }
 

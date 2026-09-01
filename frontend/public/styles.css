@@ -1095,8 +1095,13 @@ textarea {
 
 .chat-window {
   display: grid;
+  align-content: start;
   gap: 10px;
+  height: clamp(360px, 58vh, 720px);
   min-height: 250px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;

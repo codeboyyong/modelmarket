@@ -116,7 +116,9 @@ scripts/openai-smoke.sh dev
 ```
 
 The OpenAI smoke creates a project API key and sends one small, billable request
-through Model Market using `openai/gpt-4.1-mini`. It never prints either API key.
+through Model Market using the fast, low-cost `openai/gpt-5.6-luna`. It never
+prints either API key. OpenAI API usage is billed; this model does not support
+the API Free tier.
 
 Preview conversation and standalone-asset retention cleanup without deleting
 anything:

@@ -3,6 +3,7 @@ set -eu
 
 MM_APP_ENV_ARG="${1:-dev}"
 API_BASE="${API_BASE:-http://localhost:8080}"
+OPENAI_SMOKE_MODEL="${OPENAI_SMOKE_MODEL:-openai/gpt-5.6-luna}"
 
 # shellcheck disable=SC1091
 . scripts/load-db-env.sh "$MM_APP_ENV_ARG"
@@ -29,7 +30,7 @@ echo "Requesting a small completion through Model Market..."
 chat_response="$(curl -fsS -X POST "$API_BASE/api/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $api_key" \
-  -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Reply with exactly OPENAI_OK"}],"parameters":{"temperature":0,"max_tokens":16}}')"
+  -d "{\"model\":\"$OPENAI_SMOKE_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly OPENAI_OK\"}],\"parameters\":{\"max_completion_tokens\":16}}")"
 
 content="$(printf '%s' "$chat_response" | json_field choices.0.message.content)"
 request_id="$(printf '%s' "$chat_response" | json_field id)"
