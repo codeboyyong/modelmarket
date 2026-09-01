@@ -379,6 +379,14 @@ function renderMarkdown(markdown: string): string {
       continue;
     }
 
+    const media = renderAssistantMedia(line.trim());
+    if (media) {
+      flushParagraph();
+      closeList();
+      output.push(media);
+      continue;
+    }
+
     const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) {
       flushParagraph();
@@ -427,6 +435,71 @@ function renderMarkdown(markdown: string): string {
   return output.join("");
 }
 
+function renderAssistantMedia(line: string): string {
+  const markdownImage = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+["'][^"']*["'])?\)$/i);
+  const htmlImage = line.match(/^<img\s+([^>]+?)\s*\/?\s*>$/i);
+  const htmlPlayable = line.match(/^<(video|audio)\b([^>]*)>([\s\S]*)<\/\1>$/i);
+  const markdownLink = line.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/i);
+  const plainURL = line.match(/^(https?:\/\/\S+)$/i);
+  let url = markdownImage?.[2] || "";
+  let alt = markdownImage?.[1] || "Generated image";
+  let mediaType: "image" | "video" | "audio" = "image";
+  let requestedWidth = 0;
+  if (htmlImage) {
+    const attributes = htmlImage[1];
+    url = attributes.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+    alt = attributes.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1] || "Image";
+    requestedWidth = Number(attributes.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] || 0);
+  }
+  if (htmlPlayable) {
+    mediaType = htmlPlayable[1].toLowerCase() as "video" | "audio";
+    const attributes = htmlPlayable[2];
+    url = attributes.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]
+      || htmlPlayable[3].match(/<source\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/i)?.[1]
+      || "";
+    alt = attributes.match(/\btitle\s*=\s*["']([^"']*)["']/i)?.[1] || `Generated ${mediaType}`;
+    requestedWidth = Number(attributes.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] || 0);
+  }
+  if (markdownLink) {
+    const detectedType = mediaTypeForURL(markdownLink[2]);
+    if (!detectedType) return "";
+    mediaType = detectedType;
+    url = markdownLink[2];
+    alt = markdownLink[1];
+  }
+  if (plainURL) {
+    const detectedType = mediaTypeForURL(plainURL[1]);
+    if (!detectedType) return "";
+    mediaType = detectedType;
+    url = plainURL[1];
+    alt = `Generated ${mediaType}`;
+  }
+  if (!url || (!markdownImage && !htmlImage && !htmlPlayable && !markdownLink && !plainURL)) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+  } catch {
+    return "";
+  }
+  const width = requestedWidth > 0 ? Math.min(900, Math.max(80, requestedWidth)) : 0;
+  const style = width ? ` style="max-width:${width}px"` : "";
+  const filename = downloadableFilename(url, alt, mediaType);
+  let preview = `<img class="sample-media" src="${escapeHTML(url)}" alt="${escapeHTML(alt)}" loading="lazy"${style}>`;
+  if (mediaType === "video") preview = `<video class="sample-media" src="${escapeHTML(url)}" controls preload="metadata"${style}>Your browser does not support video playback.</video>`;
+  if (mediaType === "audio") preview = `<audio class="sample-media" src="${escapeHTML(url)}" controls preload="metadata">Your browser does not support audio playback.</audio>`;
+  return `<figure class="message-media-card external-message-media">${preview}<figcaption><strong>${escapeHTML(alt)}</strong>${renderDownloadButton(url, filename, `Download ${mediaType}`)}</figcaption></figure>`;
+}
+
+function mediaTypeForURL(value: string): "image" | "video" | "audio" | "" {
+  try {
+    const pathname = new URL(value).pathname.toLowerCase();
+    if (/\.(?:avif|gif|jpe?g|png|webp)$/.test(pathname)) return "image";
+    if (/\.(?:m4v|mov|mp4|ogv|webm)$/.test(pathname)) return "video";
+    if (/\.(?:aac|flac|m4a|mp3|oga|ogg|wav)$/.test(pathname)) return "audio";
+  } catch {}
+  return "";
+}
+
 function renderInlineMarkdown(value: string): string {
   return value
     .split(/(`[^`\n]+`)/g)
@@ -470,7 +543,43 @@ function renderAssetDownload(asset: WorkspaceAsset): string {
   const href = assetHref(asset);
   if (!href) return "";
   const label = `Download sample ${asset.asset_type}`;
-  return `<a class="sample-download" href="${escapeHTML(href)}" download>${escapeHTML(label)} <span aria-hidden="true">↓</span></a>`;
+  return renderDownloadButton(href, downloadableFilename(href, `sample-${asset.asset_type}`, asset.asset_type), label);
+}
+
+function renderDownloadButton(url: string, filename: string, label: string): string {
+  return `<button class="sample-download" type="button" data-download-url="${escapeHTML(encodeURIComponent(url))}" data-download-filename="${escapeHTML(filename)}">${escapeHTML(label)} <span aria-hidden="true">↓</span></button>`;
+}
+
+function downloadableFilename(url: string, fallback: string, assetType: string): string {
+  let filename = "";
+  try {
+    filename = new URL(url).pathname.split("/").pop() || "";
+  } catch {}
+  try {
+    filename = decodeURIComponent(filename);
+  } catch {}
+  filename = filename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (filename.includes(".")) return filename;
+  const extension = assetType === "video" ? ".mp4" : assetType === "audio" ? ".mp3" : ".jpg";
+  const safeFallback = fallback.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || assetType;
+  return `${safeFallback}${extension}`;
+}
+
+async function downloadRemoteFile(url: string, filename: string) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`download_http_${response.status}`);
+    const objectURL = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectURL;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -891,10 +1000,13 @@ function renderModelControls() {
   const usableModels = models.filter((model) => ["chat", "image", "audio", "video"].includes(model.modality));
   if (!usableModels.some((model) => model.modality === workbenchModality)) {
     workbenchModality = usableModels[0]?.modality || "chat";
+    localStorage.setItem("workbenchModality", workbenchModality);
   }
-  if (!selectedWorkbenchModel || !models.some((model) => model.profile_slug === selectedWorkbenchModel || model.slug === selectedWorkbenchModel)) {
+  const selectedModel = models.find((model) => model.profile_slug === selectedWorkbenchModel || model.slug === selectedWorkbenchModel);
+  if (!selectedModel || selectedModel.modality !== workbenchModality) {
     const defaultModel = usableModels.find((model) => model.modality === workbenchModality) || usableModels[0] || models[0];
     selectedWorkbenchModel = defaultModel ? defaultModel.profile_slug || defaultModel.slug : "mock-chat";
+    localStorage.setItem("workbenchModel", selectedWorkbenchModel);
   }
   $("modelSelect").innerHTML =
     models
@@ -2124,6 +2236,7 @@ function setActiveTab(tab: string) {
 function setAdminView(view: string) {
   const availableViews = new Set(["overview", "projects", "settings", "providers", "integrations", "routing", "inferences"]);
   activeAdminView = availableViews.has(view) ? view : "overview";
+  localStorage.setItem("adminView", activeAdminView);
   document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
     const active = button.dataset.adminView === activeAdminView;
     button.classList.toggle("active", active);
@@ -2172,6 +2285,9 @@ function saveSettings(event: SubmitEvent) {
   applyTheme(theme);
   localStorage.setItem("defaultUsageRange", usageRange);
   localStorage.setItem("defaultWorkbenchType", defaultWorkbenchType);
+  localStorage.setItem("creditUsageRange", usageRange);
+  localStorage.setItem("userCreditUsageRange", usageRange);
+  localStorage.setItem("workbenchModality", defaultWorkbenchType);
   localStorage.setItem("emailNotifications", String(($("settingsEmailNotifications") as HTMLInputElement).checked));
   applyCompactTables(($("settingsCompactTables") as HTMLInputElement).checked);
   ($("creditRange") as HTMLSelectElement).value = usageRange;
@@ -2694,6 +2810,13 @@ $("chatTranscript").addEventListener("contextmenu", (event) => {
   event.preventDefault();
   openMessageContextMenu(message.dataset.messageId || "", event.clientX, event.clientY);
 });
+$("chatTranscript").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-download-url]");
+  if (!button) return;
+  const url = decodeURIComponent(button.dataset.downloadUrl || "");
+  if (!url) return;
+  downloadRemoteFile(url, button.dataset.downloadFilename || "download").catch(showError);
+});
 $("branchFromMessage").addEventListener("click", () => startBranchFromMessage().catch(showError));
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
 $("uploadAsset").addEventListener("click", () => {
@@ -2718,10 +2841,20 @@ $("modelDetailContent").addEventListener("click", async (event) => {
   if (copyButton) await navigator.clipboard?.writeText(copyButton.dataset.copyModel || "");
 });
 $("modelSearch").addEventListener("input", renderModels);
-$("catalogSort").addEventListener("change", (event) => { catalogSort = (event.target as HTMLSelectElement).value; renderModels(); });
+$("catalogSort").addEventListener("change", (event) => {
+  catalogSort = (event.target as HTMLSelectElement).value;
+  localStorage.setItem("modelsSort", catalogSort);
+  renderModels();
+});
 $("pricingSearch").addEventListener("input", renderPricing);
-$("creditRange").addEventListener("change", renderCreditAnalytics);
-$("userUsageRange").addEventListener("change", renderUserCreditUsage);
+$("creditRange").addEventListener("change", () => {
+  localStorage.setItem("creditUsageRange", ($("creditRange") as HTMLSelectElement).value);
+  renderCreditAnalytics();
+});
+$("userUsageRange").addEventListener("change", () => {
+  localStorage.setItem("userCreditUsageRange", ($("userUsageRange") as HTMLSelectElement).value);
+  renderUserCreditUsage();
+});
 $("refreshPayments").addEventListener("click", () => loadPayments().catch(showError));
 $("paymentHistoryRows").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-refund-payment]");
@@ -2746,6 +2879,7 @@ $("pricingRows").addEventListener("click", (event) => {
 document.querySelectorAll<HTMLButtonElement>("[data-pricing-modality]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedPricingModality = button.dataset.pricingModality || "all";
+    localStorage.setItem("pricingModality", selectedPricingModality);
     document.querySelectorAll<HTMLButtonElement>("[data-pricing-modality]").forEach((item) => {
       item.classList.toggle("active", item.dataset.pricingModality === selectedPricingModality);
     });
@@ -2757,8 +2891,12 @@ $("workbenchModelFilter").addEventListener("input", () => openWorkbenchPicker(fa
 document.querySelectorAll<HTMLButtonElement>("[data-workbench-modality]").forEach((button) => {
   button.addEventListener("click", () => {
     workbenchModality = button.dataset.workbenchModality || "chat";
+    localStorage.setItem("workbenchModality", workbenchModality);
     const next = models.find((model) => model.modality === workbenchModality);
-    if (next) selectedWorkbenchModel = next.profile_slug || next.slug;
+    if (next) {
+      selectedWorkbenchModel = next.profile_slug || next.slug;
+      localStorage.setItem("workbenchModel", selectedWorkbenchModel);
+    }
     outputParamsOpen = false;
     renderOutputParameterControls();
     openWorkbenchPicker(true);
@@ -2768,6 +2906,7 @@ $("workbenchModelList").addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-workbench-model]");
   if (!button) return;
   selectedWorkbenchModel = button.dataset.workbenchModel || selectedWorkbenchModel;
+  localStorage.setItem("workbenchModel", selectedWorkbenchModel);
   closeWorkbenchPicker();
 });
 $("outputParamsButton").addEventListener("click", toggleOutputParameters);
@@ -2815,6 +2954,7 @@ document.querySelectorAll<HTMLElement>(".footer-submenu a").forEach((link) => {
 document.querySelectorAll<HTMLButtonElement>("[data-modality]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedModality = button.dataset.modality || "all";
+    localStorage.setItem("modelsModality", selectedModality);
     document.querySelectorAll<HTMLButtonElement>("[data-modality]").forEach((item) => {
       item.classList.toggle("active", item.dataset.modality === selectedModality);
     });
@@ -2843,9 +2983,30 @@ window.addEventListener("hashchange", () => setActiveTab(window.location.hash.sl
 applyTheme(localStorage.getItem("themeMode") || "system");
 applyLanguage(localStorage.getItem("language") || "en");
 applyCompactTables(localStorage.getItem("compactTables") === "true");
-workbenchModality = localStorage.getItem("defaultWorkbenchType") || workbenchModality;
-($("creditRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("creditRange") as HTMLSelectElement).value || "30");
-($("userUsageRange") as HTMLSelectElement).value = localStorage.getItem("defaultUsageRange") || (($("userUsageRange") as HTMLSelectElement).value || "30");
+const modalityModes = new Set(["all", "chat", "image", "audio", "video"]);
+const workbenchModes = new Set(["chat", "image", "audio", "video"]);
+const sortModes = new Set(["name", "newest", "cheapest", "provider", "modality"]);
+const adminModes = new Set(["overview", "projects", "settings", "providers", "integrations", "routing", "inferences"]);
+const usageRanges = new Set(["7", "30", "90"]);
+const storedModelsModality = localStorage.getItem("modelsModality") || "all";
+const storedPricingModality = localStorage.getItem("pricingModality") || "all";
+const storedWorkbenchModality = localStorage.getItem("workbenchModality") || localStorage.getItem("defaultWorkbenchType") || "chat";
+const storedModelsSort = localStorage.getItem("modelsSort") || "name";
+const storedAdminView = localStorage.getItem("adminView") || "overview";
+selectedModality = modalityModes.has(storedModelsModality) ? storedModelsModality : "all";
+selectedPricingModality = modalityModes.has(storedPricingModality) ? storedPricingModality : "all";
+workbenchModality = workbenchModes.has(storedWorkbenchModality) ? storedWorkbenchModality : "chat";
+catalogSort = sortModes.has(storedModelsSort) ? storedModelsSort : "name";
+activeAdminView = adminModes.has(storedAdminView) ? storedAdminView : "overview";
+selectedWorkbenchModel = localStorage.getItem("workbenchModel") || "";
+document.querySelectorAll<HTMLButtonElement>("[data-modality]").forEach((button) => button.classList.toggle("active", button.dataset.modality === selectedModality));
+document.querySelectorAll<HTMLButtonElement>("[data-pricing-modality]").forEach((button) => button.classList.toggle("active", button.dataset.pricingModality === selectedPricingModality));
+($("catalogSort") as HTMLSelectElement).value = catalogSort;
+const defaultUsageRange = localStorage.getItem("defaultUsageRange") || "30";
+const storedCreditRange = localStorage.getItem("creditUsageRange") || defaultUsageRange;
+const storedUserRange = localStorage.getItem("userCreditUsageRange") || defaultUsageRange;
+($("creditRange") as HTMLSelectElement).value = usageRanges.has(storedCreditRange) ? storedCreditRange : "30";
+($("userUsageRange") as HTMLSelectElement).value = usageRanges.has(storedUserRange) ? storedUserRange : "30";
 renderAuthUser();
 renderCreditAnalytics();
 setActiveTab(window.location.hash.slice(1) || "home");
