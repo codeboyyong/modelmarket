@@ -85,8 +85,12 @@
               Email or username
               <input id="authUsername" type="text" autocomplete="username" placeholder="admin@example.com" />
             </label>
+            <label id="currentPasswordField" class="hidden">
+              Current password
+              <input id="authCurrentPassword" type="password" autocomplete="current-password" placeholder="Enter current password" />
+            </label>
             <label>
-              Password
+              <span id="authPasswordLabel">Password</span>
               <input id="authPassword" type="password" autocomplete="current-password" placeholder="Enter your password" />
             </label>
             <label id="confirmPasswordField" class="hidden">
@@ -102,7 +106,7 @@
               <span class="social-icon google-icon" aria-hidden="true">G</span>
               <span>Continue with Google</span>
             </button>
-            <button class="social-button facebook" type="button" data-provider="facebook">
+            <button class="social-button facebook hidden" type="button" data-provider="facebook" aria-hidden="true" tabindex="-1">
               <span class="social-icon facebook-icon" aria-hidden="true">f</span>
               <span>Continue with Facebook</span>
             </button>
@@ -119,7 +123,7 @@
             <button id="toggleSignup" type="button">Sign up</button>
           </p>
           <p class="auth-switch">
-            <span id="changePasswordText">Forgot or need to reset password?</span>
+              <span id="changePasswordText">Need to change your password?</span>
             <button id="toggleChangePassword" type="button">Change password</button>
           </p>
           <p class="auth-message" id="authMessage" aria-live="polite"></p>
@@ -434,6 +438,7 @@
           <div class="admin-tabs" role="tablist" aria-label="Admin dashboard sections">
             <button class="admin-tab active" type="button" role="tab" aria-selected="true" data-admin-view="overview">Overview</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="projects">Project Info</button>
+            <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="users">Users</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="settings">Settings</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="providers">Provider API Keys</button>
             <button class="admin-tab" type="button" role="tab" aria-selected="false" data-admin-view="integrations">Integration API Tokens</button>
@@ -469,6 +474,36 @@
                   <tr><th>Project</th><th>Wallet</th><th>Used</th><th>Available</th></tr>
                 </thead>
                 <tbody id="adminBalanceRows"><tr><td colspan="4">Loading balances...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="admin-subpanel hidden" role="tabpanel" data-admin-panel="users">
+            <div class="workspace-section-head">
+              <div>
+                <h3>User management</h3>
+                <p class="admin-section-note">Create accounts, suspend access, and reset passwords. Password resets invalidate existing sessions.</p>
+              </div>
+              <button id="refreshAdminUsers" class="ghost mini-button" type="button">Refresh</button>
+            </div>
+            <p id="adminUsersMessage" class="auth-message" role="status"></p>
+            <form id="adminCreateUserForm" class="inline-management-form admin-user-form">
+              <label>Name<input id="adminNewUserName" type="text" autocomplete="off" required /></label>
+              <label>Email<input id="adminNewUserEmail" type="email" autocomplete="off" required /></label>
+              <label>Initial password<input id="adminNewUserPassword" type="password" autocomplete="new-password" minlength="8" required /></label>
+              <label>Account type
+                <select id="adminNewUserType">
+                  <option value="individual_consumer">Individual user</option>
+                  <option value="sys_admin">System administrator</option>
+                </select>
+              </label>
+              <button type="submit">Create user</button>
+            </form>
+            <label class="admin-user-search">Search users<input id="adminUserSearch" type="search" placeholder="Name or email" /></label>
+            <div class="pricing-table-wrap">
+              <table class="pricing-table">
+                <thead><tr><th>User</th><th>Type</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                <tbody id="adminUserRows"><tr><td colspan="5">Loading users...</td></tr></tbody>
               </table>
             </div>
           </div>

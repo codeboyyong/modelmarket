@@ -1601,6 +1601,17 @@ pre {
   font-weight: 800;
 }
 
+.admin-user-form {
+  margin: 16px 0;
+}
+
+.admin-user-search {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+  margin: 14px 0;
+}
+
 .company-management small {
   display: block;
   margin-top: 4px;

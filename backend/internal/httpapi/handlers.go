@@ -148,24 +148,42 @@ func (a *App) passwordLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username        string `json:"username"`
+		CurrentPassword string `json:"current_password"`
+		Password        string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, response{"error": "invalid_json"})
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" || req.Password == "" {
+	if req.Username == "" || req.CurrentPassword == "" || req.Password == "" {
 		writeJSON(w, http.StatusBadRequest, response{"error": "missing_credentials"})
 		return
 	}
-	email, _, err := a.lookupLoginIdentity(r.Context(), req.Username)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
+	if err := validateAccountPassword(req.Password); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": "weak_password", "message": err.Error()})
 		return
 	}
-	result, err := a.DB.ExecContext(r.Context(), `
+	changeLimitKey := "password-change|" + strings.ToLower(req.Username) + "|" + requestIP(r)
+	if retryAfter, allowed := a.checkLoginAllowed(changeLimitKey); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retryAfter.Seconds()))))
+		writeJSON(w, http.StatusTooManyRequests, response{"error": "password_change_temporarily_locked"})
+		return
+	}
+	email, storedHash, err := a.lookupLoginIdentity(r.Context(), req.Username)
+	if err != nil || storedHash == "" || !verifyPassword(storedHash, req.CurrentPassword) {
+		a.recordLoginFailure(changeLimitKey)
+		writeJSON(w, http.StatusUnauthorized, response{"error": "invalid_credentials"})
+		return
+	}
+	tx, err := a.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": "password_update_failed"})
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `
 		update sys_users
 		set password_hash = $1
 		where lower(email) = lower($2)`, a.passwordHash(req.Password), email)
@@ -178,6 +196,15 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, response{"error": "user_not_found"})
 		return
 	}
+	if _, err = tx.ExecContext(r.Context(), `delete from sys_sessions where user_id = (select id from sys_users where lower(email) = lower($1))`, email); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": "password_update_failed"})
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": "password_update_failed"})
+		return
+	}
+	a.clearLoginFailures(changeLimitKey)
 	writeJSON(w, http.StatusOK, response{"status": "password_updated", "email": email})
 }
 
@@ -312,7 +339,7 @@ func (a *App) lookupLoginIdentity(ctx context.Context, identity string) (string,
 	err := a.DB.QueryRowContext(ctx, `
 		select email, coalesce(password_hash, '')
 		from sys_users
-		where lower(email) = lower($1) or lower(name) = lower($1)
+		where status = 'active' and (lower(email) = lower($1) or lower(name) = lower($1))
 		limit 1`, identity).Scan(&email, &passwordHash)
 	if err != nil {
 		return "", "", err
@@ -330,7 +357,7 @@ func (a *App) loginByEmail(ctx context.Context, email string) (response, error) 
 		join sys_organizations o on o.id = m.organization_id
 		join user_projects p on p.organization_id = o.id
 		left join user_companies c on c.id = u.company_id
-		where u.email = $1
+		where u.email = $1 and u.status = 'active'
 		order by p.created_at asc
 		limit 1`, email).Scan(&userID, &name, &userType, &companyID, &companyName, &orgID, &projectID)
 	if err != nil {

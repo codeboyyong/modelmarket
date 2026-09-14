@@ -241,6 +241,7 @@ type Payment = {
 };
 
 type PromptPreset = { id: string; name: string; model: string; prompt: string; parameters: Record<string, string | number | boolean> };
+type AdminUser = { id: string; email: string; name: string; user_type: string; status: string; created_at: string };
 
 type AdminOverviewResponse = {
   configs: Array<{ key: string; value: string; description: string }>;
@@ -1522,6 +1523,77 @@ async function loadAdminOverview() {
   }
 }
 
+async function loadAdminUsers() {
+  const user = getStoredUser();
+  if (!user || !isAdminUser(user)) return;
+  const query = ($("adminUserSearch") as HTMLInputElement).value.trim();
+  try {
+    const data = await request<{ users: AdminUser[] }>(`/api/v1/admin/users?user_id=${encodeURIComponent(user.id)}&query=${encodeURIComponent(query)}`);
+    $("adminUserRows").innerHTML = data.users.map((item) => `<tr>
+      <td><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(item.email)}</small></td>
+      <td>${escapeHTML(formatUserType(item.user_type))}</td>
+      <td><span class="tag">${escapeHTML(item.status)}</span></td>
+      <td>${escapeHTML(new Date(item.created_at).toLocaleDateString())}</td>
+      <td><span class="row-actions">
+        <button class="ghost mini-button" type="button" data-admin-user-action="reset" data-admin-user-id="${escapeHTML(item.id)}">Reset password</button>
+        ${item.id === user.id ? "" : `<button class="ghost mini-button" type="button" data-admin-user-action="status" data-admin-user-id="${escapeHTML(item.id)}" data-admin-user-status="${item.status === "active" ? "suspended" : "active"}">${item.status === "active" ? "Suspend" : "Activate"}</button>`}
+      </span></td>
+    </tr>`).join("") || '<tr><td colspan="5">No users found.</td></tr>';
+  } catch (error) {
+    $("adminUserRows").innerHTML = `<tr><td colspan="5">${escapeHTML(error instanceof Error ? error.message : String(error))}</td></tr>`;
+  }
+}
+
+function setAdminUsersMessage(message: string, isError = false) {
+  $("adminUsersMessage").textContent = message;
+  $("adminUsersMessage").classList.toggle("error", isError);
+}
+
+async function createAdminUser(event: SubmitEvent) {
+  event.preventDefault();
+  const user = getStoredUser();
+  if (!user || !isAdminUser(user)) return;
+  const name = ($("adminNewUserName") as HTMLInputElement).value.trim();
+  const email = ($("adminNewUserEmail") as HTMLInputElement).value.trim();
+  const password = ($("adminNewUserPassword") as HTMLInputElement).value;
+  const userType = ($("adminNewUserType") as HTMLSelectElement).value;
+  const passwordError = validateSignupPassword(password);
+  if (passwordError) {
+    setAdminUsersMessage(passwordError, true);
+    return;
+  }
+  setAdminUsersMessage("Creating user...");
+  try {
+    await request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ user_id: user.id, name, email, password, user_type: userType }) });
+    ($("adminCreateUserForm") as HTMLFormElement).reset();
+    setAdminUsersMessage(`Created ${email}.`);
+    await loadAdminUsers();
+  } catch (error) {
+    setAdminUsersMessage(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+async function handleAdminUserAction(action: string, targetID: string, status: string) {
+  const user = getStoredUser();
+  if (!user || !isAdminUser(user)) return;
+  if (action === "status") {
+    if (!window.confirm(`${status === "suspended" ? "Suspend" : "Activate"} this user?`)) return;
+    await request(`/api/v1/admin/users/${encodeURIComponent(targetID)}`, { method: "PATCH", body: JSON.stringify({ user_id: user.id, status }) });
+    setAdminUsersMessage(`User is now ${status}.`);
+  } else if (action === "reset") {
+    const password = window.prompt("Enter a new temporary password (at least 8 characters with a letter, number, and special character).");
+    if (password === null) return;
+    const passwordError = validateSignupPassword(password);
+    if (passwordError) {
+      setAdminUsersMessage(passwordError, true);
+      return;
+    }
+    await request(`/api/v1/admin/users/${encodeURIComponent(targetID)}/reset-password`, { method: "POST", body: JSON.stringify({ user_id: user.id, password }) });
+    setAdminUsersMessage("Password reset; existing sessions were revoked.");
+  }
+  await loadAdminUsers();
+}
+
 function renderAdminOverview(data: AdminOverviewResponse) {
   $("adminConfigRows").innerHTML =
     data.configs
@@ -2234,7 +2306,7 @@ function setActiveTab(tab: string) {
 }
 
 function setAdminView(view: string) {
-  const availableViews = new Set(["overview", "projects", "settings", "providers", "integrations", "routing", "inferences"]);
+  const availableViews = new Set(["overview", "projects", "users", "settings", "providers", "integrations", "routing", "inferences"]);
   activeAdminView = availableViews.has(view) ? view : "overview";
   localStorage.setItem("adminView", activeAdminView);
   document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
@@ -2245,6 +2317,7 @@ function setAdminView(view: string) {
   document.querySelectorAll<HTMLElement>("[data-admin-panel]").forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.adminPanel !== activeAdminView);
   });
+  if (activeAdminView === "users") void loadAdminUsers();
 }
 
 function openLogin() {
@@ -2415,14 +2488,17 @@ function renderAuthMode() {
   $("accountTypeField").classList.toggle("hidden", !signupMode);
   $("companyNameField").classList.toggle("hidden", !signupMode || selectedSignupAccountType() !== "corporate");
   $("confirmPasswordField").classList.toggle("hidden", !signupMode && !changePasswordMode);
+  $("currentPasswordField").classList.toggle("hidden", !changePasswordMode);
   document.querySelector<HTMLElement>(".social-login")?.classList.toggle("hidden", changePasswordMode);
   document.querySelector<HTMLElement>(".social-divider")?.classList.toggle("hidden", changePasswordMode);
   ($("authUsername") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "off" : "username";
   ($("authPassword") as HTMLInputElement).autocomplete = signupMode || changePasswordMode ? "new-password" : "current-password";
   ($("authConfirmPassword") as HTMLInputElement).autocomplete = "new-password";
+  $("authPasswordLabel").textContent = changePasswordMode ? "New password" : "Password";
   if (signupMode || changePasswordMode) {
     ($("authUsername") as HTMLInputElement).value = "";
     ($("authPassword") as HTMLInputElement).value = "";
+    ($("authCurrentPassword") as HTMLInputElement).value = "";
     ($("authConfirmPassword") as HTMLInputElement).value = "";
   }
   if (changePasswordMode) {
@@ -2439,7 +2515,7 @@ function renderAuthMode() {
     $("authSubmit").textContent = signupMode ? "Create account" : "Login";
     $("authSwitchText").textContent = signupMode ? "Already have an account?" : "No account yet?";
     $("toggleSignup").textContent = signupMode ? "Login" : "Sign up";
-    $("changePasswordText").textContent = "Forgot or need to reset password?";
+    $("changePasswordText").textContent = "Need to change your password?";
     $("toggleChangePassword").textContent = "Change password";
   }
   setAuthMessage("");
@@ -2449,6 +2525,7 @@ async function submitAuth(event: SubmitEvent) {
   event.preventDefault();
   const username = ($("authUsername") as HTMLInputElement).value.trim();
   const password = ($("authPassword") as HTMLInputElement).value;
+  const currentPassword = ($("authCurrentPassword") as HTMLInputElement).value;
   const confirmPassword = ($("authConfirmPassword") as HTMLInputElement).value;
   const name = ($("authName") as HTMLInputElement).value.trim();
   const accountType = selectedSignupAccountType();
@@ -2465,7 +2542,7 @@ async function submitAuth(event: SubmitEvent) {
     }
   }
   const path = changePasswordMode ? "/api/v1/auth/change-password" : signupMode ? "/api/v1/auth/signup" : "/api/v1/auth/login";
-  const body = changePasswordMode ? { username, password } : signupMode ? { email: username, name, password, account_type: accountType, company_name: companyName } : { username, password };
+  const body = changePasswordMode ? { username, current_password: currentPassword, password } : signupMode ? { email: username, name, password, account_type: accountType, company_name: companyName } : { username, password };
   setAuthMessage(changePasswordMode ? "Updating password..." : signupMode ? "Creating account..." : "Logging in...");
   try {
     const auth = await request<AuthResponse>(path, {
@@ -2489,7 +2566,7 @@ async function socialLogin(provider: string, selectedButton: HTMLButtonElement) 
   buttons.forEach((button) => { button.disabled = true; });
   selectedButton.classList.add("loading");
   setAuthMessage(`Connecting to ${providerName}...`);
-	if (provider === "google" || provider === "facebook") {
+	if (provider === "google" || provider === "facebook" || provider === "github") {
 		window.location.assign(`${apiBase}/api/v1/auth/oauth/${provider}/start`);
 		return;
 	}
@@ -2972,6 +3049,14 @@ document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
 document.querySelectorAll<HTMLButtonElement>("[data-admin-view]").forEach((button) => {
   button.addEventListener("click", () => setAdminView(button.dataset.adminView || "overview"));
 });
+$("adminCreateUserForm").addEventListener("submit", (event) => createAdminUser(event as SubmitEvent));
+$("refreshAdminUsers").addEventListener("click", () => loadAdminUsers());
+$("adminUserSearch").addEventListener("input", () => loadAdminUsers());
+$("adminUserRows").addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-admin-user-action]");
+  if (!button) return;
+  handleAdminUserAction(button.dataset.adminUserAction || "", button.dataset.adminUserId || "", button.dataset.adminUserStatus || "").catch((error) => setAdminUsersMessage(error instanceof Error ? error.message : String(error), true));
+});
 [$("adminProviderCredentialRows"), $("adminIntegrationCredentialRows")].forEach((tableBody) => {
   tableBody.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-edit-credential]");
@@ -2986,7 +3071,7 @@ applyCompactTables(localStorage.getItem("compactTables") === "true");
 const modalityModes = new Set(["all", "chat", "image", "audio", "video"]);
 const workbenchModes = new Set(["chat", "image", "audio", "video"]);
 const sortModes = new Set(["name", "newest", "cheapest", "provider", "modality"]);
-const adminModes = new Set(["overview", "projects", "settings", "providers", "integrations", "routing", "inferences"]);
+const adminModes = new Set(["overview", "projects", "users", "settings", "providers", "integrations", "routing", "inferences"]);
 const usageRanges = new Set(["7", "30", "90"]);
 const storedModelsModality = localStorage.getItem("modelsModality") || "all";
 const storedPricingModality = localStorage.getItem("pricingModality") || "all";
