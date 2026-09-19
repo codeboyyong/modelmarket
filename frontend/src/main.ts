@@ -582,7 +582,10 @@ async function downloadRemoteFile(url: string, filename: string) {
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
+    // Safari treats window.open() here as an unrequested popup because it runs
+    // after an awaited fetch, not synchronously inside the click handler, so it
+    // gets silently blocked instead of opening. An alert is always shown instead.
+    window.alert(`Couldn't download this file. The source link may be unavailable.\n\n${url}`);
   }
 }
 
@@ -2897,6 +2900,18 @@ $("chatTranscript").addEventListener("click", (event) => {
   if (!url) return;
   downloadRemoteFile(url, button.dataset.downloadFilename || "download").catch(showError);
 });
+// "error" does not bubble, so this listener must run in the capture phase to catch
+// broken inline images (e.g. a link the model returned that no longer resolves).
+$("chatTranscript").addEventListener("error", (event) => {
+  const img = event.target as HTMLElement;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("sample-media")) return;
+  const card = img.closest(".message-media-card");
+  const fallback = document.createElement("div");
+  fallback.className = "media-broken";
+  fallback.textContent = `${img.alt || "Image"}: preview unavailable`;
+  img.replaceWith(fallback);
+  card?.querySelector<HTMLButtonElement>("[data-download-url]")?.remove();
+}, true);
 $("branchFromMessage").addEventListener("click", () => startBranchFromMessage().catch(showError));
 $("sendPrompt").addEventListener("click", () => sendPrompt().catch(showError));
 $("uploadAsset").addEventListener("click", () => {

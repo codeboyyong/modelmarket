@@ -1231,6 +1231,14 @@ textarea {
   object-fit: contain;
 }
 
+.media-broken {
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 audio.sample-media {
   min-height: 54px;
   padding: 8px;
