@@ -85,6 +85,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/assets", a.assets)
 	mux.HandleFunc("POST /api/v1/assets/upload-intent", a.createUploadIntent)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
+	mux.HandleFunc("GET /api/v1/assets/{id}/download/{filename}", a.downloadAsset)
 	mux.HandleFunc("GET /api/v1/mock-s3/", a.mockS3Object)
 	mux.HandleFunc("PUT /api/v1/mock-s3/", a.mockS3Object)
 	mux.HandleFunc("GET /api/v1/api-keys", a.apiKeys)

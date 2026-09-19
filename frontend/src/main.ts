@@ -437,11 +437,11 @@ function renderMarkdown(markdown: string): string {
 }
 
 function renderAssistantMedia(line: string): string {
-  const markdownImage = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+["'][^"']*["'])?\)$/i);
+  const markdownImage = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/api\/v1\/assets\/[^\s)]+)(?:\s+["'][^"']*["'])?\)$/i);
   const htmlImage = line.match(/^<img\s+([^>]+?)\s*\/?\s*>$/i);
   const htmlPlayable = line.match(/^<(video|audio)\b([^>]*)>([\s\S]*)<\/\1>$/i);
-  const markdownLink = line.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/i);
-  const plainURL = line.match(/^(https?:\/\/\S+)$/i);
+  const markdownLink = line.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/api\/v1\/assets\/[^\s)]+)\)$/i);
+  const plainURL = line.match(/^(https?:\/\/\S+|\/api\/v1\/assets\/\S+)$/i);
   let url = markdownImage?.[2] || "";
   let alt = markdownImage?.[1] || "Generated image";
   let mediaType: "image" | "video" | "audio" = "image";
@@ -476,6 +476,9 @@ function renderAssistantMedia(line: string): string {
     alt = `Generated ${mediaType}`;
   }
   if (!url || (!markdownImage && !htmlImage && !htmlPlayable && !markdownLink && !plainURL)) return "";
+  if (url.startsWith("/")) {
+    url = `${apiBase}${url}`;
+  }
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
@@ -493,7 +496,7 @@ function renderAssistantMedia(line: string): string {
 
 function mediaTypeForURL(value: string): "image" | "video" | "audio" | "" {
   try {
-    const pathname = new URL(value).pathname.toLowerCase();
+    const pathname = new URL(value, apiBase).pathname.toLowerCase();
     if (/\.(?:avif|gif|jpe?g|png|webp)$/.test(pathname)) return "image";
     if (/\.(?:m4v|mov|mp4|ogv|webm)$/.test(pathname)) return "video";
     if (/\.(?:aac|flac|m4a|mp3|oga|ogg|wav)$/.test(pathname)) return "audio";

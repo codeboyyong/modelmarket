@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -68,6 +69,20 @@ func (a *App) writeGeneratedObject(ctx context.Context, key string, content []by
 	return int64(len(content)), nil
 }
 
+func (a *App) readStoredObject(ctx context.Context, key string) ([]byte, error) {
+	if a.storageProvider() == "s3" {
+		if a.ObjectStore == nil {
+			return nil, errors.New("S3 object store is not initialized")
+		}
+		return a.ObjectStore.Get(ctx, key)
+	}
+	localPath, err := a.objectStoragePath(key)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(localPath)
+}
+
 func (a *App) deleteStoredObject(ctx context.Context, key string) error {
 	if key == "" {
 		return nil
@@ -90,6 +105,7 @@ func (a *App) deleteStoredObject(ctx context.Context, key string) error {
 
 type ObjectStore interface {
 	Put(context.Context, string, []byte, string) error
+	Get(context.Context, string) ([]byte, error)
 	Delete(context.Context, string) error
 	PresignPut(context.Context, string, string, time.Duration) (string, error)
 	PresignGet(context.Context, string, time.Duration) (string, error)
@@ -121,6 +137,15 @@ func NewS3ObjectStore(ctx context.Context, cfg config.Config) (ObjectStore, erro
 func (s *s3ObjectStore) Put(ctx context.Context, key string, content []byte, contentType string) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(content), ContentType: aws.String(contentType)})
 	return err
+}
+
+func (s *s3ObjectStore) Get(ctx context.Context, key string) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	return io.ReadAll(io.LimitReader(out.Body, 25<<20))
 }
 
 func (s *s3ObjectStore) Delete(ctx context.Context, key string) error {

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1935,6 +1937,34 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) downloadAsset(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var objectKey, mimeType string
+	err := a.DB.QueryRowContext(r.Context(), `select coalesce(object_key, ''), coalesce(mime_type, 'application/octet-stream') from user_workbench_assets where id = $1`, id).Scan(&objectKey, &mimeType)
+	if errors.Is(err, sql.ErrNoRows) || objectKey == "" {
+		writeJSON(w, http.StatusNotFound, response{"error": "asset_not_found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
+		return
+	}
+	content, err := a.readStoredObject(r.Context(), objectKey)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, response{"error": "asset_fetch_failed"})
+		return
+	}
+	filename := r.PathValue("filename")
+	if filename == "" {
+		filename = filepath.Base(objectKey)
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(filename)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+}
+
 func (a *App) mockS3Object(w http.ResponseWriter, r *http.Request) {
 	objectKey := strings.TrimPrefix(r.URL.Path, "/api/v1/mock-s3/")
 	localPath, err := a.objectStoragePath(objectKey)
@@ -2206,6 +2236,10 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
+	rehostedArtifacts := []response{}
+	if route.ModelModality == "chat" {
+		content, rehostedArtifacts = a.rehostExternalFilesInContent(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, content)
+	}
 	for index, failedRoute := range failedRoutes {
 		_, err = a.DB.ExecContext(r.Context(), `
 			insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
@@ -2247,6 +2281,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	artifacts = append(artifacts, rehostedArtifacts...)
 	completion := response{
 		"id":        requestID,
 		"object":    "chat.completion",
@@ -2495,10 +2530,7 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 		bucket := a.Config.AssetBucket
 		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, filename}, "/"), "/")
 		storagePath := "s3://" + bucket + "/" + objectKey
-		downloadURL, err := a.objectDownloadURL(ctx, bucket, objectKey)
-		if err != nil {
-			return nil, err
-		}
+		downloadURL := "/api/v1/assets/" + assetID + "/download/" + filename
 		content := mockGeneratedAssetContent(route, parameters, prompt, assetID, i+1, count)
 		if route.ModelModality == "image" {
 			content = mockGeneratedImageSVG(route, parameters, prompt, assetID)
@@ -2536,6 +2568,179 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 		})
 	}
 	return artifacts, nil
+}
+
+var (
+	markdownFileLinkRe = regexp.MustCompile(`!?\[[^\]\n]*\]\((https?://[^\s)]+)\)`)
+	dataURIRe          = regexp.MustCompile(`data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]{20,})`)
+)
+
+const maxRehostedAssetBytes = 25 * 1024 * 1024
+
+// rehostExternalFilesInContent scans an assistant chat reply for externally hosted
+// files (markdown links) and inline base64 data URIs, downloads/decodes each one,
+// uploads it to our own object storage, and rewrites the reference in the message
+// to an internal download link so the browser never has to trust or keep talking
+// to the original external host.
+func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, content string) (string, []response) {
+	if conversationID != "" && branchID == "" {
+		if resolved, err := a.defaultBranchID(ctx, conversationID); err == nil {
+			branchID = resolved
+		}
+	}
+	artifacts := []response{}
+
+	store := func(sourceRef string, body []byte, contentType, filenameHint string) (string, bool) {
+		assetType := generatedAssetTypeForContentType(contentType)
+		if assetType == "" || len(body) == 0 || len(body) > maxRehostedAssetBytes {
+			return "", false
+		}
+		assetID := "asset_" + randomHex(12)
+		filename := sanitizeFilename(filenameHint)
+		if filename == "" || !strings.Contains(filename, ".") {
+			filename = assetType + "-" + assetID + extensionForContentType(contentType)
+		}
+		bucket := a.Config.AssetBucket
+		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, filename}, "/"), "/")
+		storagePath := "s3://" + bucket + "/" + objectKey
+		sizeBytes, err := a.writeGeneratedObject(ctx, objectKey, body, contentType)
+		if err != nil {
+			return "", false
+		}
+		downloadURL := "/api/v1/assets/" + assetID + "/download/" + filename
+		metadataRaw, _ := json.Marshal(response{"rehosted_from": truncateString(sourceRef, 1000), "inference_request_id": inferenceRequestID})
+		_, err = a.DB.ExecContext(ctx, `
+			insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, inference_request_id, metadata)
+			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			assetID, projectID, conversationID, branchID, assetType, storagePath, a.storageProvider(), bucket, objectKey, downloadURL, contentType, sizeBytes, inferenceRequestID, truncateString(string(metadataRaw), 3900))
+		if err != nil {
+			return "", false
+		}
+		artifacts = append(artifacts, response{
+			"id": assetID, "project_id": projectID, "conversation_id": conversationID, "branch_id": branchID,
+			"asset_type": assetType, "asset_origin": "generated",
+			"storage_path": storagePath, "storage_provider": a.storageProvider(), "bucket_name": bucket, "object_key": objectKey,
+			"download_url": downloadURL, "mime_type": contentType, "size_bytes": sizeBytes,
+			"inference_request_id": inferenceRequestID, "customer_charge": int64(0), "provider_cost": int64(0),
+		})
+		return downloadURL, true
+	}
+
+	content = dataURIRe.ReplaceAllStringFunc(content, func(match string) string {
+		groups := dataURIRe.FindStringSubmatch(match)
+		if len(groups) != 3 {
+			return match
+		}
+		decoded, err := base64.StdEncoding.DecodeString(groups[2])
+		if err != nil {
+			return match
+		}
+		if newURL, ok := store(match, decoded, groups[1], ""); ok {
+			return newURL
+		}
+		return match
+	})
+
+	content = markdownFileLinkRe.ReplaceAllStringFunc(content, func(match string) string {
+		groups := markdownFileLinkRe.FindStringSubmatch(match)
+		if len(groups) != 2 {
+			return match
+		}
+		sourceURL := groups[1]
+		body, contentType, err := a.fetchExternalFile(ctx, sourceURL)
+		if err != nil {
+			return match
+		}
+		filenameHint := ""
+		if parsed, parseErr := url.Parse(sourceURL); parseErr == nil {
+			filenameHint = filepath.Base(parsed.Path)
+		}
+		newURL, ok := store(sourceURL, body, contentType, filenameHint)
+		if !ok {
+			return match
+		}
+		return strings.Replace(match, sourceURL, newURL, 1)
+	})
+
+	return content, artifacts
+}
+
+func (a *App) fetchExternalFile(ctx context.Context, sourceURL string) ([]byte, string, error) {
+	fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	client := a.Client
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("external_fetch_http_%d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRehostedAssetBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(body) > maxRehostedAssetBytes {
+		return nil, "", errors.New("external_file_too_large")
+	}
+	contentType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return body, contentType, nil
+}
+
+func generatedAssetTypeForContentType(contentType string) string {
+	lower := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch {
+	case strings.HasPrefix(lower, "image/"):
+		return "image"
+	case strings.HasPrefix(lower, "video/"):
+		return "video"
+	case strings.HasPrefix(lower, "audio/"):
+		return "audio"
+	case lower == "application/pdf":
+		return "document"
+	default:
+		return ""
+	}
+}
+
+func extensionForContentType(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "application/pdf":
+		return ".pdf"
+	default:
+		return ".bin"
+	}
 }
 
 func (a *App) defaultBranchID(ctx context.Context, conversationID string) (string, error) {

@@ -126,6 +126,9 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 	}
 	if strings.HasPrefix(path, "/api/v1/assets/") && path != "/api/v1/assets/upload-intent" {
 		id := strings.TrimPrefix(path, "/api/v1/assets/")
+		if slash := strings.Index(id, "/"); slash >= 0 {
+			id = id[:slash]
+		}
 		var found int
 		return a.DB.QueryRowContext(r.Context(), `select 1 from user_workbench_assets a join user_projects p on p.id = a.project_id join sys_memberships m on m.organization_id = p.organization_id where a.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
 	}

@@ -95,7 +95,8 @@ func (f *fakeObjectStore) Put(_ context.Context, key string, body []byte, _ stri
 	f.putBody = body
 	return nil
 }
-func (f *fakeObjectStore) Delete(context.Context, string) error { return nil }
+func (f *fakeObjectStore) Get(context.Context, string) ([]byte, error) { return f.putBody, nil }
+func (f *fakeObjectStore) Delete(context.Context, string) error        { return nil }
 func (f *fakeObjectStore) PresignPut(_ context.Context, key, _ string, _ time.Duration) (string, error) {
 	return "https://s3.test/put/" + key, nil
 }
