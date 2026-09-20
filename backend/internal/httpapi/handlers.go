@@ -2197,6 +2197,9 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}()
 	failedRoutes := []selectedModelRoute{}
 	failedMessages := []string{}
+	if a.Logger != nil {
+		a.Logger.Info("generation_started", "inference_request_id", requestID, "model", route.UpstreamModelID)
+	}
 	upstream, err := a.runChatUpstream(r.Context(), route, req.Messages, req.Parameters)
 	if err != nil {
 		failedRoutes = append(failedRoutes, route)
@@ -2237,7 +2240,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rehostedArtifacts := []response{}
-	if route.ModelModality == "chat" {
+	if route.ModelModality == "chat" || route.ChannelType == "google_gemini" {
 		content, rehostedArtifacts = a.rehostExternalFilesInContent(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, content)
 	}
 	for index, failedRoute := range failedRoutes {
@@ -2270,7 +2273,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	artifacts := []response{}
-	if isGeneratedAssetModality(route.ModelModality) {
+	if isGeneratedAssetModality(route.ModelModality) && (strings.HasPrefix(route.BaseURL, "mock://") || route.ProviderSlug == "mock-provider") {
 		prompt := ""
 		if len(req.Messages) > 0 {
 			prompt = req.Messages[len(req.Messages)-1].Text()
@@ -2572,7 +2575,7 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 
 var (
 	markdownFileLinkRe = regexp.MustCompile(`!?\[[^\]\n]*\]\((https?://[^\s)]+)\)`)
-	dataURIRe          = regexp.MustCompile(`data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]{20,})`)
+	dataURIRe          = regexp.MustCompile(`data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)`)
 )
 
 const maxRehostedAssetBytes = 25 * 1024 * 1024
@@ -2589,10 +2592,17 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 		}
 	}
 	artifacts := []response{}
+	failed := func(stage string) string {
+		if a.Logger != nil {
+			a.Logger.Warn("artifact_import_failed", "inference_request_id", inferenceRequestID, "stage", stage)
+		}
+		return "Artifact unavailable: could not " + stage + ". Please retry."
+	}
 
 	store := func(sourceRef string, body []byte, contentType, filenameHint string) (string, bool) {
 		assetType := generatedAssetTypeForContentType(contentType)
 		if assetType == "" || len(body) == 0 || len(body) > maxRehostedAssetBytes {
+			failed("validate artifact")
 			return "", false
 		}
 		assetID := "asset_" + randomHex(12)
@@ -2601,10 +2611,11 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 			filename = assetType + "-" + assetID + extensionForContentType(contentType)
 		}
 		bucket := a.Config.AssetBucket
-		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, filename}, "/"), "/")
+		objectKey := strings.Trim(strings.Join([]string{a.Config.AppEnv, "projects", projectID, "generated", inferenceRequestID, assetID, filename}, "/"), "/")
 		storagePath := "s3://" + bucket + "/" + objectKey
 		sizeBytes, err := a.writeGeneratedObject(ctx, objectKey, body, contentType)
 		if err != nil {
+			failed("save artifact to storage")
 			return "", false
 		}
 		downloadURL := "/api/v1/assets/" + assetID + "/download/" + filename
@@ -2614,7 +2625,12 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 			assetID, projectID, conversationID, branchID, assetType, storagePath, a.storageProvider(), bucket, objectKey, downloadURL, contentType, sizeBytes, inferenceRequestID, truncateString(string(metadataRaw), 3900))
 		if err != nil {
+			failed("create asset record")
+			_ = a.deleteStoredObject(ctx, objectKey)
 			return "", false
+		}
+		if a.Logger != nil {
+			a.Logger.Info("artifact_ready", "inference_request_id", inferenceRequestID, "asset_id", assetID, "storage_provider", a.storageProvider(), "size_bytes", sizeBytes)
 		}
 		artifacts = append(artifacts, response{
 			"id": assetID, "project_id": projectID, "conversation_id": conversationID, "branch_id": branchID,
@@ -2633,12 +2649,12 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 		}
 		decoded, err := base64.StdEncoding.DecodeString(groups[2])
 		if err != nil {
-			return match
+			return failed("decode generated artifact")
 		}
 		if newURL, ok := store(match, decoded, groups[1], ""); ok {
 			return newURL
 		}
-		return match
+		return failed("save generated artifact")
 	})
 
 	content = markdownFileLinkRe.ReplaceAllStringFunc(content, func(match string) string {
@@ -2649,6 +2665,15 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 		sourceURL := groups[1]
 		body, contentType, err := a.fetchExternalFile(ctx, sourceURL)
 		if err != nil {
+			if strings.HasPrefix(match, "!") {
+				return failed("fetch image")
+			}
+			return match
+		}
+		if generatedAssetTypeForContentType(contentType) == "" {
+			if strings.HasPrefix(match, "!") {
+				return failed("read image bytes")
+			}
 			return match
 		}
 		filenameHint := ""
@@ -2657,11 +2682,12 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 		}
 		newURL, ok := store(sourceURL, body, contentType, filenameHint)
 		if !ok {
-			return match
+			return failed("save artifact")
 		}
 		return strings.Replace(match, sourceURL, newURL, 1)
 	})
 
+	content = regexp.MustCompile(`!?\[[^\]\n]*\]\((Artifact unavailable:[^)]*)\)`).ReplaceAllString(content, "$1")
 	return content, artifacts
 }
 
@@ -2868,6 +2894,9 @@ type upstreamChatResult struct {
 }
 
 func (a *App) runChatUpstream(ctx context.Context, route selectedModelRoute, messages []chatMessage, parameters response) (upstreamChatResult, error) {
+	if isGeneratedAssetModality(route.ModelModality) && route.ChannelType != "google_gemini" && !strings.HasPrefix(route.BaseURL, "mock://") && route.ProviderSlug != "mock-provider" {
+		return upstreamChatResult{}, errors.New("real artifact generation is not supported for this provider; select an image-capable Gemini model")
+	}
 	return a.providerAdapter(route).Complete(ctx, route, messages, parameters)
 }
 
@@ -2892,9 +2921,13 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		SystemInstruction *struct {
 			Parts []geminiPart `json:"parts"`
 		} `json:"system_instruction,omitempty"`
-		Contents []geminiContent `json:"contents"`
+		Contents         []geminiContent `json:"contents"`
+		GenerationConfig response        `json:"generationConfig,omitempty"`
 	}{}
 
+	if route.ModelModality == "image" || strings.Contains(route.UpstreamModelID, "-image") {
+		payload.GenerationConfig = response{"responseModalities": []string{"TEXT", "IMAGE"}}
+	}
 	systemParts := []geminiPart{}
 	for _, message := range messages {
 		text := strings.TrimSpace(message.Text())
@@ -2937,7 +2970,7 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 
 	client := a.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 180 * time.Second}
 	}
 	start := time.Now()
 	resp, err := client.Do(httpReq)
@@ -2946,9 +2979,13 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		return upstreamChatResult{}, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	const maxResponseBytes = 40 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return upstreamChatResult{}, err
+	}
+	if len(body) > maxResponseBytes {
+		return upstreamChatResult{}, errors.New("gemini response exceeds artifact size limit")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return upstreamChatResult{}, fmt.Errorf("gemini status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -2958,7 +2995,12 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text       string `json:"text"`
+					Thought    bool   `json:"thought"`
+					InlineData *struct {
+						MimeType string `json:"mimeType"`
+						Data     string `json:"data"`
+					} `json:"inlineData"`
 				} `json:"parts"`
 			} `json:"content"`
 			FinishReason string `json:"finishReason"`
@@ -2973,8 +3015,24 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		return upstreamChatResult{}, err
 	}
 	parts := []string{}
+	hasArtifact := false
 	for _, candidate := range parsed.Candidates {
 		for _, part := range candidate.Content.Parts {
+			if part.Thought {
+				continue
+			}
+			if part.InlineData != nil {
+				media := part.InlineData
+				if generatedAssetTypeForContentType(media.MimeType) == "" {
+					return upstreamChatResult{}, errors.New("gemini returned unsupported artifact type")
+				}
+				decoded, decodeErr := base64.StdEncoding.DecodeString(media.Data)
+				if decodeErr != nil || len(decoded) == 0 || len(decoded) > maxRehostedAssetBytes {
+					return upstreamChatResult{}, errors.New("gemini returned invalid or oversized artifact")
+				}
+				hasArtifact = true
+				parts = append(parts, "![Generated artifact](data:"+media.MimeType+";base64,"+media.Data+")")
+			}
 			if strings.TrimSpace(part.Text) != "" {
 				parts = append(parts, part.Text)
 			}
@@ -2984,8 +3042,11 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		}
 	}
 	content := strings.TrimSpace(strings.Join(parts, "\n"))
+	if route.ModelModality == "image" && !hasArtifact {
+		return upstreamChatResult{}, errors.New("gemini did not generate an image; try another prompt or an image-capable model")
+	}
 	if content == "" {
-		return upstreamChatResult{}, errors.New("gemini returned no text")
+		return upstreamChatResult{}, errors.New("gemini returned no text or generated artifact")
 	}
 	promptTokens := parsed.UsageMetadata.PromptTokenCount
 	completionTokens := parsed.UsageMetadata.CandidatesTokenCount
@@ -2993,7 +3054,7 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 		promptTokens = len(messages)
 	}
 	if completionTokens == 0 {
-		completionTokens = len(content)
+		completionTokens = 0 // Never bill base64 image bytes as text tokens.
 	}
 	return upstreamChatResult{
 		Content:           content,

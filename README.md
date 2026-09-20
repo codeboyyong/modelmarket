@@ -456,3 +456,27 @@ Next phase:
   unit:
   unit_price: 
  
+
+### Gemini image artifacts
+
+Gemini image generation uses `generateContent`: the request waits for completed
+image bytes, then saves them to object storage and inserts the asset record before
+returning the preview and `/api/v1/assets/{id}/download/{filename}` link. There is
+no background-job polling for this synchronous provider endpoint.
+
+Configure an image-capable Gemini model route with channel type `google_gemini`,
+modality `image`, the provider's actual image-generation model ID, and its pricing.
+The seeded Gemini **chat** model does not automatically switch to an image model
+based on the prompt. Model availability and billing depend on your Google account.
+See https://ai.google.dev/gemini-api/docs/image-generation for supported models.
+
+For S3 storage, configure `OBJECT_STORAGE_PROVIDER=s3`, `MM_ASSET_BUCKET`, AWS
+credentials and, for MinIO, `S3_ENDPOINT_URL` and `S3_FORCE_PATH_STYLE=true` in `.env`.
+The default is local container storage. Rebuild/recreate the backend after changes.
+
+Follow `docker compose logs -f backend`: `generation_started`, `artifact_ready`,
+and `artifact_import_failed` identify generation and storage stages. Failed image
+imports appear as explicit messages rather than broken external previews. These
+changes affect new requests; they do not repair previously saved broken links or
+upload seeded placeholder artifacts. Real non-Gemini media generation is not yet
+implemented; mock artifacts are restricted to mock routes.

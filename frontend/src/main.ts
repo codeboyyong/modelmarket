@@ -1411,7 +1411,7 @@ async function sendPrompt() {
     });
     const answer = data.choices?.[0]?.message?.content || "Response received from backend.";
     const artifactNote = data.artifacts?.length
-      ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. See Artifacts for the object-storage download URL.`
+      ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. Files are saved. See Artifacts to preview or download.`
       : "";
     replaceWaitingMessage(waitingID, `${answer}${artifactNote}`);
     await loadSummary();
@@ -1468,7 +1468,7 @@ function scrollTranscriptToBottom() {
 function appendWaitingMessage() {
   const id = `waiting-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const transcript = $("chatTranscript");
-  transcript.insertAdjacentHTML("beforeend", `<div class="message assistant pending-message" id="${id}" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Waiting for model response</span></div>`);
+  transcript.insertAdjacentHTML("beforeend", `<div class="message assistant pending-message" id="${id}" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span>Waiting for response and saving any generated files…</span></div>`);
   scrollTranscriptToBottom();
   return id;
 }
