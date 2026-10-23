@@ -312,7 +312,7 @@ func TestCreateAPIKey(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectExec("insert into user_api_keys").
-		WithArgs(sqlmock.AnyArg(), "project-1", "Test key", sqlmock.AnyArg(), sqlmock.AnyArg(), "models:read,chat:create", nil, "dev", int64(60), nil, "").
+		WithArgs(sqlmock.AnyArg(), "project-1", "Test key", sqlmock.AnyArg(), sqlmock.AnyArg(), "models:read,chat:create", nil, "dev", int64(60), nil, "", nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/api-keys", bytes.NewBufferString(`{"project_id":"project-1","name":"Test key"}`))
@@ -364,28 +364,27 @@ func TestChatCompletions(t *testing.T) {
 			AddRow("route-mock-chat-primary", "default", "mock-chat", "chat", "profile-mock-chat-default", "mock-chat", "provider-mock", "mock-provider", "channel-mock-primary", "Mock Primary Channel", "openai_compatible", "mock://provider/default", "", int64(100), int64(100), int64(42)))
 	mock.ExpectQuery("select pr.id, pr.pricing_variant").
 		WithArgs("mock-chat", "profile-mock-chat-default").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).AddRow("request-price", "default", "output", "request", 1.0, 0.0, "{}", true))
+	mock.ExpectQuery("select conf_value from sys_config").WithArgs("usd_to_credit_ratio").WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
 	mock.ExpectBegin()
 	mock.ExpectQuery("select w.id, w.paid_credits, w.promotional_credits").WithArgs("project-1").WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", int64(100), int64(0)))
-	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(int64(0), int64(1), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", int64(-1), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(float64(0), float64(1), "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", float64(-1), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	mock.ExpectQuery("select pr.id, pr.pricing_variant").
-		WithArgs("mock-chat", "profile-mock-chat-default").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}))
 	mock.ExpectBegin()
 	mock.ExpectQuery("select paid_credits, promotional_credits").WithArgs("wallet-1").WillReturnRows(sqlmock.NewRows([]string{"paid_credits", "promotional_credits"}).AddRow(int64(99), int64(0)))
 	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
 	mock.ExpectExec("insert into user_inference_requests").
-		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), int64(1), int64(0), int64(1), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "project-1", "mock-chat", "profile-mock-chat-default", "route-mock-chat-primary", "channel-mock-primary", "mock-provider", 1, sqlmock.AnyArg(), float64(1), float64(0), float64(1), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_provider_attempts").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-mock", "channel-mock-primary", "route-mock-chat-primary", int64(42), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_usage_events").
-		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "mock-chat", "mock-provider", "chat_completion", 1, sqlmock.AnyArg(), int64(1), int64(0), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "mock-chat", "mock-provider", "chat_completion", 1, sqlmock.AnyArg(), float64(1), float64(0), sqlmock.AnyArg(), hashAPIKey(apiKey)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"mock-chat","messages":[{"role":"user","content":"hello"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -459,23 +458,18 @@ func TestChatCompletionsCallsGemini(t *testing.T) {
 	mock.ExpectQuery("select conf_value from sys_config").
 		WithArgs("usd_to_credit_ratio").
 		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
-	mock.ExpectQuery("select pr.id, pr.pricing_variant").
-		WithArgs("gemini-2.5-flash", "profile-gemini-test").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "pricing_variant", "price_type", "price_unit", "price", "provider_price", "price_metadata", "profile_matched"}).
-			AddRow("price-gemini-input", "free_tier", "input", "1k_tokens", 0.0, 0.0, "{}", true).
-			AddRow("price-gemini-output", "free_tier", "output", "1k_tokens", 0.0, 0.0, "{}", true))
-	mock.ExpectQuery("select conf_value from sys_config").
-		WithArgs("usd_to_credit_ratio").
-		WillReturnRows(sqlmock.NewRows([]string{"conf_value"}).AddRow("100"))
+	mock.ExpectBegin()
 	mock.ExpectExec("insert into user_inference_requests").
-		WithArgs(sqlmock.AnyArg(), "project-1", "gemini-2.5-flash", "profile-gemini-test", "route-gemini-test", "channel-gemini-free", "google-gemini", 7, 5, int64(0), int64(0), int64(0), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "project-1", "gemini-2.5-flash", "profile-gemini-test", "route-gemini-test", "channel-gemini-free", "google-gemini", 7, 5, float64(0), float64(0), float64(0), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_provider_attempts").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "provider-google-gemini", "channel-gemini-free", "route-gemini-test", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("insert into user_usage_events").
-		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "gemini-2.5-flash", "google-gemini", "chat_completion", 7, 5, int64(0), int64(0), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "project-1", sqlmock.AnyArg(), "gemini-2.5-flash", "google-gemini", "chat_completion", 7, 5, float64(0), float64(0), sqlmock.AnyArg(), hashAPIKey(apiKey)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewBufferString(`{"model":"gemini-2-5-flash-free-default","messages":[{"role":"user","content":"hello gemini"}]}`))
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -534,10 +528,10 @@ func TestCalculateRequestChargeUsesOutputParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 	if charge.CustomerCharge != 350 {
-		t.Fatalf("customer charge = %d, want 350", charge.CustomerCharge)
+		t.Fatalf("customer charge = %g, want 350", charge.CustomerCharge)
 	}
 	if charge.ProviderCost != 35 {
-		t.Fatalf("provider cost = %d, want 35", charge.ProviderCost)
+		t.Fatalf("provider cost = %g, want 35", charge.ProviderCost)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

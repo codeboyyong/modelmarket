@@ -116,7 +116,7 @@ func (a *App) exportConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	messages, err := a.exportRows(r, `select id, coalesce(branch_id, ''), role, content, coalesce(model_profile_id, ''), customer_charge, provider_cost, created_at from user_messages where conversation_id = $1 order by created_at, id`, id, func(rows *sql.Rows) (response, error) {
 		var messageID, branchID, role, content, profile string
-		var charge, cost int64
+		var charge, cost float64
 		var created time.Time
 		err := rows.Scan(&messageID, &branchID, &role, &content, &profile, &charge, &cost, &created)
 		return response{"id": messageID, "branch_id": branchID, "role": role, "content": content, "model_profile_id": profile, "customer_charge": charge, "provider_cost": cost, "created_at": created}, err

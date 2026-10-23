@@ -123,7 +123,7 @@ type PricingRow = {
 type CreditRange = "7" | "30" | "90";
 
 type UsageSlice = {
-  type: "image" | "audio" | "video";
+  type: "chat" | "image" | "audio" | "video";
   label: string;
   credits: number;
   color: string;
@@ -660,7 +660,7 @@ function renderProjects() {
         const active = project.id === currentProjectID ? " active" : "";
         return `<button class="workspace-row${active}" type="button" data-project-id="${escapeHTML(project.id)}">
           <span><strong>${escapeHTML(project.name)}</strong><small>${escapeHTML(project.organization)}</small></span>
-          <p>${(project.credits_used || 0).toLocaleString()} credits used / ${credits.toLocaleString()} available</p>
+          <p>${(project.credits_used || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })} credits used / ${credits.toLocaleString(undefined, { maximumFractionDigits: 8 })} available</p>
         </button>`;
       })
       .join("") || `<div class="empty-state">${projectLoadError ? `Projects could not be loaded: ${escapeHTML(projectLoadError)}` : "No projects yet. Create your first project to begin."}</div>`;
@@ -1385,7 +1385,7 @@ async function createKey() {
   if (!currentProjectID) throw new Error("No project loaded. Run scripts/populate_test_data.sh dev first.");
   const data = await request<{ api_key: string; prefix: string }>("/api/v1/api-keys", {
     method: "POST",
-    body: JSON.stringify({ project_id: currentProjectID, name: "Frontend dev key" })
+    body: JSON.stringify({ project_id: currentProjectID, name: "Frontend dev key", user_id: getStoredUser()?.id })
   });
   currentAPIKey = data.api_key;
 }
@@ -1615,8 +1615,8 @@ function renderAdminOverview(data: AdminOverviewResponse) {
       .map((row) => `<tr>
         <td><strong>${escapeHTML(row.name)}</strong><small>${escapeHTML(row.id)}</small></td>
         <td>${Number(row.wallet_credits || 0).toLocaleString()}</td>
-        <td>${Number(row.credits_used || 0).toLocaleString()}</td>
-        <td><strong>${Number(row.available_credits || 0).toLocaleString()}</strong></td>
+        <td>${Number(row.credits_used || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+        <td><strong>${Number(row.available_credits || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</strong></td>
       </tr>`)
       .join("") || "<tr><td colspan=\"4\">No project balances found.</td></tr>";
   $("adminRouteRows").innerHTML =
@@ -1636,7 +1636,7 @@ function renderAdminOverview(data: AdminOverviewResponse) {
         <td><strong>${escapeHTML(row.id)}</strong><small>${escapeHTML(new Date(row.created_at).toLocaleString())}</small></td>
         <td>${escapeHTML(row.model)}<small>${escapeHTML(row.provider)}</small></td>
         <td>${escapeHTML(row.status)}</td>
-        <td><strong>${Number(row.customer_charge || 0).toLocaleString()}</strong><small>Cost ${Number(row.provider_cost || 0).toLocaleString()}</small></td>
+        <td><strong>${Number(row.customer_charge || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</strong><small>Cost ${Number(row.provider_cost || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</small></td>
       </tr>`)
       .join("") || "<tr><td colspan=\"4\">No inference requests yet.</td></tr>";
 }
@@ -1697,22 +1697,25 @@ async function renderCreditAnalytics() {
     const usageRows = data.usage.map((row) => ({ ...row, color: colorForModel(row.model_slug) }));
     renderCreditAnalyticsData(range, usageRows, data.purchases);
   } catch {
-    const usageRows = buildUserTokenUsage(range);
-    const purchases = buildUserCreditPurchases(range);
-    renderCreditAnalyticsData(range, usageRows, purchases);
+    $("currentCreditBalance").textContent = "—";
+    $("creditLineChart").textContent = "Could not load credit usage. Please retry.";
+    $("creditPieChart").textContent = "Unavailable";
+    $("creditUsageLegend").textContent = "";
   }
 }
 
 function renderCreditAnalyticsData(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
-  const balancePoints = buildBalanceHistoryPoints(range, usageRows, purchases);
-  const currentBalance = balancePoints[balancePoints.length - 1] || 0;
-  $("currentCreditBalance").textContent = `${Math.round(currentBalance).toLocaleString()} credits`;
+  const balancePoints = buildCreditChangePoints(range, usageRows, purchases);
+  const project = projects.find((item) => item.id === currentProjectID);
+  const currentBalance = project ? project.paid_credits + project.promotional_credits : null;
+  $("currentCreditBalance").textContent = currentBalance === null ? "—" : `${currentBalance.toLocaleString(undefined, { maximumFractionDigits: 8 })} credits`;
   renderCreditLineChart(balancePoints);
   renderCreditUsageChart(buildCreditUsageByType(usageRows));
 }
 
 function buildCreditUsageByType(rows: UserTokenUsageRow[]): UsageSlice[] {
-  const totals = new Map<"image" | "audio" | "video", number>([
+  const totals = new Map<"chat" | "image" | "audio" | "video", number>([
+    ["chat", 0],
     ["image", 0],
     ["audio", 0],
     ["video", 0]
@@ -1722,6 +1725,7 @@ function buildCreditUsageByType(rows: UserTokenUsageRow[]): UsageSlice[] {
     totals.set(type, (totals.get(type) || 0) + chargeForUsageRow(row));
   });
   return [
+    { type: "chat", label: "Chat", credits: totals.get("chat") || 0, color: "#8b5cf6" },
     { type: "image", label: "Image", credits: totals.get("image") || 0, color: "#3f8cff" },
     { type: "audio", label: "Audio", credits: totals.get("audio") || 0, color: "#12b981" },
     { type: "video", label: "Video", credits: totals.get("video") || 0, color: "#f59e0b" }
@@ -1750,25 +1754,25 @@ function renderCreditLineChart(points: number[]) {
       <polyline points="${coords.join(" ")}" />
       <circle cx="${coords[coords.length - 1]?.split(",")[0] || pad}" cy="${coords[coords.length - 1]?.split(",")[1] || pad}" r="4" />
     </svg>
-    <div class="chart-note"><span>${first.toLocaleString()} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString()}</strong></div>
+    <div class="chart-note"><span>${first.toLocaleString(undefined, { maximumFractionDigits: 8 })} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString(undefined, { maximumFractionDigits: 8 })}</strong></div>
   `;
 }
 
 function renderCreditUsageChart(slices: UsageSlice[]) {
-  const total = slices.reduce((sum, slice) => sum + slice.credits, 0) || 1;
+  const total = slices.reduce((sum, slice) => sum + slice.credits, 0);
   let cursor = 0;
   const gradient = slices
     .map((slice) => {
       const start = cursor;
-      cursor += (slice.credits / total) * 100;
+      cursor += (slice.credits / (total || 1)) * 100;
       return `${slice.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
     })
     .join(", ");
-  $("creditPieChart").style.background = `conic-gradient(${gradient})`;
-  $("creditPieChart").innerHTML = `<span>${total.toLocaleString()}<small>credits</small></span>`;
+  $("creditPieChart").style.background = total > 0 ? `conic-gradient(${gradient})` : "#e5e7eb";
+  $("creditPieChart").innerHTML = `<span>${total.toLocaleString(undefined, { maximumFractionDigits: 8 })}<small>credits</small></span>`;
   $("creditUsageLegend").innerHTML = slices
     .map((slice) => {
-      const percent = Math.round((slice.credits / total) * 100);
+      const percent = Math.round((slice.credits / (total || 1)) * 100);
       return `<div><i style="background:${slice.color}"></i><span>${escapeHTML(slice.label)}</span><strong>${percent}%</strong></div>`;
     })
     .join("");
@@ -1783,11 +1787,15 @@ async function renderUserCreditUsage() {
     const usageRows = data.usage.map((row) => ({ ...row, color: colorForModel(row.model_slug) }));
     renderUserCreditUsageData(range, usageRows, data.purchases, data.total_tokens, data.credits_bought, data.top_model || topUserUsageModel(usageRows));
   } catch {
-    const usageRows = buildUserTokenUsage(range);
-    const purchases = buildUserCreditPurchases(range);
-    const totalTokens = usageRows.reduce((sum, row) => sum + row.input_tokens + row.output_tokens, 0);
-    const totalCreditsBought = purchases.reduce((sum, purchase) => sum + purchase.credits, 0);
-    renderUserCreditUsageData(range, usageRows, purchases, totalTokens, totalCreditsBought, topUserUsageModel(usageRows));
+    $("userTokenTotal").textContent = "—";
+    $("userCreditBought").textContent = "—";
+    $("userTopModel").textContent = "—";
+    $("userDailyUsageRows").innerHTML = '<tr><td colspan="5">Could not load usage. Please retry.</td></tr>';
+    $("userCreditPurchaseRows").innerHTML = '<tr><td colspan="4">Could not load purchases. Please retry.</td></tr>';
+    $("userTokenLineChart").textContent = "Unavailable";
+    $("userBalanceLineChart").textContent = "Unavailable";
+    $("userModelPieChart").textContent = "Unavailable";
+    $("userModelUsageLegend").textContent = "";
   }
   await loadPayments();
 }
@@ -1856,41 +1864,6 @@ function renderUserCreditUsageData(range: CreditRange, usageRows: UserTokenUsage
   renderUserPurchaseTable(purchases);
 }
 
-function buildUserTokenUsage(range: CreditRange): UserTokenUsageRow[] {
-  const days = Number(range);
-  const modelSeed = [
-    { model: "xAI: Grok Imagine Video", model_slug: "x-ai/grok-imagine-video", inputBase: 820, outputBase: 1640, color: "#f59e0b" },
-    { model: "Microsoft: MAI-Image-2.5", model_slug: "microsoft/mai-image-2.5", inputBase: 520, outputBase: 980, color: "#3f8cff" },
-    { model: "OpenAI: GPT Audio", model_slug: "openai/gpt-audio", inputBase: 430, outputBase: 760, color: "#12b981" }
-  ];
-  return Array.from({ length: days }, (_, dayIndex) => {
-    const date = dateDaysAgo(days - dayIndex - 1);
-    return modelSeed.map((model, modelIndex) => {
-      const wave = 1 + Math.sin((dayIndex + 1) * (modelIndex + 2) * 0.42) * 0.18;
-      const weekdayBoost = dayIndex % 7 === 2 || dayIndex % 7 === 3 ? 1.22 : 1;
-      const rangeBoost = days === 7 ? 1.12 : days === 90 ? 0.86 : 1;
-      return {
-        date,
-        model: model.model,
-        model_slug: model.model_slug,
-        input_tokens: Math.round(model.inputBase * wave * weekdayBoost * rangeBoost),
-        output_tokens: Math.round(model.outputBase * wave * weekdayBoost * rangeBoost),
-        color: model.color
-      };
-    });
-  }).flat();
-}
-
-function buildUserCreditPurchases(range: CreditRange): CreditPurchase[] {
-  const purchases = [
-    { date: dateDaysAgo(3), credits: 5000, amount: "$50.00", status: "Posted" },
-    { date: dateDaysAgo(18), credits: 10000, amount: "$100.00", status: "Posted" },
-    { date: dateDaysAgo(44), credits: 5000, amount: "$50.00", status: "Posted" },
-    { date: dateDaysAgo(72), credits: 20000, amount: "$200.00", status: "Posted" }
-  ];
-  return purchases.filter((purchase) => daysBetween(purchase.date) < Number(range));
-}
-
 function renderUserDailyUsageTable(rows: UserTokenUsageRow[]) {
   $("userDailyUsageRows").innerHTML = rows
     .slice()
@@ -1902,7 +1875,7 @@ function renderUserDailyUsageTable(rows: UserTokenUsageRow[]) {
         <td><strong>${escapeHTML(row.model)}</strong><small>${escapeHTML(row.model_slug)}</small></td>
         <td>${row.input_tokens.toLocaleString()}</td>
         <td>${row.output_tokens.toLocaleString()}</td>
-        <td>${total.toLocaleString()}</td>
+        <td>${total.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
       </tr>`;
     })
     .join("");
@@ -1913,7 +1886,7 @@ function renderUserPurchaseTable(purchases: CreditPurchase[]) {
     purchases
       .map((purchase) => `<tr>
         <td>${escapeHTML(purchase.date)}</td>
-        <td>${purchase.credits.toLocaleString()}</td>
+        <td>${purchase.credits.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
         <td>${escapeHTML(formatPurchaseAmount(purchase))}</td>
         <td>${escapeHTML(purchase.status)}</td>
       </tr>`)
@@ -1929,27 +1902,27 @@ function renderUserTokenLineChart(rows: UserTokenUsageRow[]) {
 }
 
 function renderUserBalanceLineChart(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
-  renderLineChart("userBalanceLineChart", buildBalanceHistoryPoints(range, usageRows, purchases), "credits");
+  renderLineChart("userBalanceLineChart", buildCreditChangePoints(range, usageRows, purchases), "credits");
 }
 
-function buildBalanceHistoryPoints(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
+function buildCreditChangePoints(range: CreditRange, usageRows: UserTokenUsageRow[], purchases: CreditPurchase[]) {
   const days = Number(range);
-  let balance = 12000;
+  let balance = 0;
   const usageByDate = new Map<string, number>();
   usageRows.forEach((row) => {
     usageByDate.set(row.date, (usageByDate.get(row.date) || 0) + chargeForUsageRow(row));
   });
   const purchasesByDate = new Map<string, number>();
-  purchases.forEach((purchase) => {
+  purchases.filter((purchase) => purchase.status.toLowerCase() === "posted").forEach((purchase) => {
     purchasesByDate.set(purchase.date, (purchasesByDate.get(purchase.date) || 0) + purchase.credits);
   });
   const points = Array.from({ length: days }, (_, index) => {
     const date = dateDaysAgo(days - index - 1);
     balance += purchasesByDate.get(date) || 0;
     balance -= usageByDate.get(date) || 0;
-    return Math.max(0, balance);
+    return Math.round(balance * 1e8) / 1e8;
   });
-  return points;
+  return [0, ...points];
 }
 
 function renderUserModelPieChart(rows: UserTokenUsageRow[]) {
@@ -1960,20 +1933,20 @@ function renderUserModelPieChart(rows: UserTokenUsageRow[]) {
     byModel.set(row.model, current);
   });
   const slices = Array.from(byModel.entries()).map(([label, value]) => ({ label, credits: value.total, color: value.color }));
-  const total = slices.reduce((sum, slice) => sum + slice.credits, 0) || 1;
+  const total = slices.reduce((sum, slice) => sum + slice.credits, 0);
   let cursor = 0;
   const gradient = slices
     .map((slice) => {
       const start = cursor;
-      cursor += (slice.credits / total) * 100;
+      cursor += (slice.credits / (total || 1)) * 100;
       return `${slice.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
     })
     .join(", ");
-  $("userModelPieChart").style.background = `conic-gradient(${gradient})`;
-  $("userModelPieChart").innerHTML = `<span>${total.toLocaleString()}<small>tokens</small></span>`;
+  $("userModelPieChart").style.background = total > 0 ? `conic-gradient(${gradient})` : "#e5e7eb";
+  $("userModelPieChart").innerHTML = `<span>${total.toLocaleString(undefined, { maximumFractionDigits: 8 })}<small>tokens</small></span>`;
   $("userModelUsageLegend").innerHTML = slices
     .map((slice) => {
-      const percent = Math.round((slice.credits / total) * 100);
+      const percent = Math.round((slice.credits / (total || 1)) * 100);
       return `<div><i style="background:${slice.color}"></i><span>${escapeHTML(slice.label)}</span><strong>${percent}%</strong></div>`;
     })
     .join("");
@@ -2001,7 +1974,7 @@ function renderLineChart(elementID: string, points: number[], unit: string) {
       <polyline points="${coords.join(" ")}" />
       <circle cx="${coords[coords.length - 1]?.split(",")[0] || pad}" cy="${coords[coords.length - 1]?.split(",")[1] || pad}" r="4" />
     </svg>
-    <div class="chart-note"><span>${first.toLocaleString()} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString()} ${escapeHTML(unit)}</strong></div>
+    <div class="chart-note"><span>${first.toLocaleString(undefined, { maximumFractionDigits: 8 })} start</span><strong>${change >= 0 ? "+" : ""}${change.toLocaleString(undefined, { maximumFractionDigits: 8 })} ${escapeHTML(unit)}</strong></div>
   `;
 }
 
@@ -2014,14 +1987,15 @@ function topUserUsageModel(rows: UserTokenUsageRow[]) {
 
 function chargeForUsageRow(row: UserTokenUsageRow) {
   if (typeof row.customer_charge === "number") return row.customer_charge;
-  return Math.max(1, Math.round((row.input_tokens + row.output_tokens) / 100));
+  return 0;
 }
 
-function usageTypeForRow(row: UserTokenUsageRow): "image" | "audio" | "video" {
+function usageTypeForRow(row: UserTokenUsageRow): "chat" | "image" | "audio" | "video" {
   const value = `${row.modality || ""} ${row.model_slug}`.toLowerCase();
   if (value.includes("audio")) return "audio";
   if (value.includes("video")) return "video";
-  return "image";
+  if (value.includes("image")) return "image";
+  return "chat";
 }
 
 function colorForModel(modelSlug: string) {
@@ -2042,13 +2016,6 @@ function dateDaysAgo(daysAgo: number) {
   date.setHours(0, 0, 0, 0);
   date.setDate(date.getDate() - daysAgo);
   return date.toISOString().slice(0, 10);
-}
-
-function daysBetween(dateValue: string) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const then = new Date(`${dateValue}T00:00:00`);
-  return Math.round((today.getTime() - then.getTime()) / 86400000);
 }
 
 async function loadCorporateUsage(user: AuthUser) {
@@ -2159,7 +2126,7 @@ function renderCorporateUsage(data: CompanyUsageResponse | null) {
         <td><strong>${escapeHTML(member.name)}</strong></td>
         <td>${escapeHTML(formatUserType(member.user_type))}</td>
         <td>${escapeHTML(member.email)}</td>
-        <td>${Number(member.credits_used || 0).toLocaleString()}</td>
+        <td>${Number(member.credits_used || 0).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
       </tr>`)
       .join("") || "<tr><td colspan=\"4\">No company members found.</td></tr>";
   renderCorporateUsageChart(models);
@@ -2436,7 +2403,7 @@ function updatePaymentFields() {
 function updateBuyCreditEstimate() {
   const usd = Math.max(0, Number(($("buyCreditAmount") as HTMLInputElement).value || 0));
   const credits = Math.round(usd * buyCreditRatio);
-  $("buyCreditUsd").textContent = `${credits.toLocaleString()} credits`;
+  $("buyCreditUsd").textContent = `${credits.toLocaleString(undefined, { maximumFractionDigits: 8 })} credits`;
 }
 
 async function submitBuyCredit(event: SubmitEvent) {
@@ -2463,7 +2430,7 @@ async function submitBuyCredit(event: SubmitEvent) {
       window.location.href = result.checkout_url;
       return;
     }
-    setBuyCreditMessage(`Added ${result.credits.toLocaleString()} credits for $${(result.amount_cents / 100).toFixed(2)}.`);
+    setBuyCreditMessage(`Added ${result.credits.toLocaleString(undefined, { maximumFractionDigits: 8 })} credits for $${(result.amount_cents / 100).toFixed(2)}.`);
     await loadProjects();
     await renderCreditAnalytics();
     await renderUserCreditUsage();

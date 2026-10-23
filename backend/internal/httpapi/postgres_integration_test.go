@@ -59,11 +59,11 @@ func TestPostgresConcurrentReservationsCannotOverspend(t *testing.T) {
 	if err := app.releaseProjectCredits(ctx, succeeded.id, succeeded.reservation); err != nil {
 		t.Fatal(err)
 	}
-	var paid, promotional int64
+	var paid, promotional float64
 	if err := db.QueryRowContext(ctx, `select paid_credits, promotional_credits from user_wallets where id = 'wallet-demo'`).Scan(&paid, &promotional); err != nil {
 		t.Fatal(err)
 	}
 	if paid != 10000 || promotional != 5000 {
-		t.Fatalf("wallet not restored: paid=%d promotional=%d", paid, promotional)
+		t.Fatalf("wallet not restored: paid=%g promotional=%g", paid, promotional)
 	}
 }

@@ -111,7 +111,7 @@ func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route sel
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
-		Usage struct {
+		Usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 		} `json:"usage"`
@@ -121,6 +121,9 @@ func (p openAICompatibleProviderAdapter) Complete(ctx context.Context, route sel
 	}
 	if len(decoded.Choices) == 0 {
 		return upstreamChatResult{}, errors.New("provider response has no choices")
+	}
+	if decoded.Usage == nil || decoded.Usage.PromptTokens < 0 || decoded.Usage.CompletionTokens < 0 {
+		return upstreamChatResult{}, errors.New("provider response has missing or invalid usage")
 	}
 	return upstreamChatResult{Content: decoded.Choices[0].Message.Content, PromptTokens: decoded.Usage.PromptTokens, CompletionTokens: decoded.Usage.CompletionTokens, LatencyMS: time.Since(started).Milliseconds(), ProviderRequestID: decoded.ID}, nil
 }

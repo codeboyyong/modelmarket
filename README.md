@@ -27,6 +27,7 @@ The product direction is documented in:
 - [docs/docker.md](docs/docker.md)
 - [docs/postgresql.md](docs/postgresql.md)
 - [docs/security.md](docs/security.md)
+- [docs/billing.md](docs/billing.md)
 - [docs/auth_integration.md](docs/auth_integration.md)
 - [docs/object-storage.md](docs/object-storage.md)
 

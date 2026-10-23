@@ -29,6 +29,13 @@ import (
 
 type response map[string]any
 
+type sqlExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type billingKeyContextKey struct{}
+
 func (a *App) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, response{"status": "ok", "service": "model-market-backend"})
 }
@@ -512,7 +519,7 @@ func (a *App) companyUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{"company": response{"id": companyID, "name": companyName}, "total_credits": totalCredits, "members": members, "models": models})
 }
 
-func (a *App) companyUsageMembers(ctx context.Context, companyID string) ([]response, int64, error) {
+func (a *App) companyUsageMembers(ctx context.Context, companyID string) ([]response, float64, error) {
 	rows, err := a.DB.QueryContext(ctx, `
 		select u.id, u.email, u.name, u.user_type, coalesce(sum(ue.customer_charge), 0)
 		from sys_users u
@@ -525,10 +532,10 @@ func (a *App) companyUsageMembers(ctx context.Context, companyID string) ([]resp
 	}
 	defer rows.Close()
 	items := []response{}
-	var total int64
+	var total float64
 	for rows.Next() {
 		var id, email, name, userType string
-		var credits int64
+		var credits float64
 		if err := rows.Scan(&id, &email, &name, &userType, &credits); err != nil {
 			return nil, 0, err
 		}
@@ -554,7 +561,7 @@ func (a *App) companyUsageModels(ctx context.Context, companyID string) ([]respo
 	items := []response{}
 	for rows.Next() {
 		var slug, name, modality string
-		var credits int64
+		var credits float64
 		if err := rows.Scan(&slug, &name, &modality, &credits); err != nil {
 			return nil, err
 		}
@@ -837,11 +844,11 @@ func (a *App) adminProjectBalances(ctx context.Context) ([]response, error) {
 	items := []response{}
 	for rows.Next() {
 		var id, name string
-		var walletCredits, used int64
+		var walletCredits, used float64
 		if err := rows.Scan(&id, &name, &walletCredits, &used); err != nil {
 			return nil, err
 		}
-		available := walletCredits - used
+		available := walletCredits
 		if available < 0 {
 			available = 0
 		}
@@ -863,7 +870,7 @@ func (a *App) adminRecentInferences(ctx context.Context) ([]response, error) {
 	items := []response{}
 	for rows.Next() {
 		var id, model, provider, status string
-		var charge, cost int64
+		var charge, cost float64
 		var createdAt time.Time
 		if err := rows.Scan(&id, &model, &provider, &status, &charge, &cost, &createdAt); err != nil {
 			return nil, err
@@ -876,26 +883,30 @@ func (a *App) adminRecentInferences(ctx context.Context) ([]response, error) {
 func (a *App) userCreditUsage(w http.ResponseWriter, r *http.Request) {
 	rangeDays := parseRangeDays(r.URL.Query().Get("range"))
 	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if user, ok := currentUser(r.Context()); ok && userID == "" {
+		userID = user.ID
+	}
 	if userID == "" {
-		userID = "user-yong-zhao"
+		writeJSON(w, http.StatusBadRequest, response{"error": "missing_user_id"})
+		return
 	}
-	if _, err := a.resolveUsageUserID(r.Context(), userID); err != nil {
-		userID = "user-yong-zhao"
+	resolvedID, err := a.resolveUsageUserID(r.Context(), userID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, response{"error": "usage_user_lookup_failed"})
+		return
 	}
+	userID = resolvedID
 
 	usage, totalTokens, topModel, err := a.userTokenUsageRows(r.Context(), userID, rangeDays)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	if len(usage) == 0 && userID != "user-yong-zhao" {
-		userID = "user-yong-zhao"
-		usage, totalTokens, topModel, err = a.userTokenUsageRows(r.Context(), userID, rangeDays)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-			return
-		}
-	}
+
 	purchases, creditsBought, err := a.userCreditPurchases(r.Context(), userID, rangeDays)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -941,7 +952,8 @@ func (a *App) userTokenUsageRows(ctx context.Context, userID string, rangeDays i
 	var totalTokens int64
 	for rows.Next() {
 		var date, slug, name, modality string
-		var inputTokens, outputTokens, customerCharge int64
+		var inputTokens, outputTokens int64
+		var customerCharge float64
 		if err := rows.Scan(&date, &slug, &name, &modality, &inputTokens, &outputTokens, &customerCharge); err != nil {
 			return nil, 0, "", err
 		}
@@ -983,7 +995,9 @@ func (a *App) userCreditPurchases(ctx context.Context, userID string, rangeDays 
 		if err := rows.Scan(&date, &credits, &amountCents, &currency, &status); err != nil {
 			return nil, 0, err
 		}
-		totalCredits += credits
+		if status == "posted" {
+			totalCredits += credits
+		}
 		items = append(items, response{"date": date, "credits": credits, "amount_cents": amountCents, "currency": currency, "status": status})
 	}
 	return items, totalCredits, rows.Err()
@@ -1408,13 +1422,13 @@ func (a *App) postStripeCreditPurchase(ctx context.Context, sessionID, paymentIn
 }
 
 func (a *App) creditRatio(ctx context.Context) (float64, error) {
-	raw, err := a.configValue(ctx, "usd_to_credit_ratio", "1")
+	raw, err := a.configValue(ctx, "usd_to_credit_ratio", "100")
 	if err != nil {
-		return 1, err
+		return 0, err
 	}
-	var ratio float64
-	if _, err := fmt.Sscanf(raw, "%f", &ratio); err != nil || ratio <= 0 {
-		return 1, nil
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0, errors.New("invalid_usd_to_credit_ratio")
 	}
 	return ratio, nil
 }
@@ -1470,7 +1484,7 @@ func (a *App) walletForUser(ctx context.Context, userID string) (string, error) 
 	return walletID, err
 }
 
-func (a *App) enforceProjectBalance(ctx context.Context, projectID string, requiredCredits int64) error {
+func (a *App) enforceProjectBalance(ctx context.Context, projectID string, requiredCredits float64) error {
 	if requiredCredits <= 0 {
 		return nil
 	}
@@ -1479,40 +1493,24 @@ func (a *App) enforceProjectBalance(ctx context.Context, projectID string, requi
 		return err
 	}
 	if available < requiredCredits {
-		return fmt.Errorf("available %d credits, required %d credits", available, requiredCredits)
+		return fmt.Errorf("available %g credits, required %g credits", available, requiredCredits)
 	}
 	return nil
 }
 
-func (a *App) projectAvailableCredits(ctx context.Context, projectID string) (int64, error) {
-	var walletCredits, usageCredits int64
+func (a *App) projectAvailableCredits(ctx context.Context, projectID string) (float64, error) {
+	var walletCredits float64
 	err := a.DB.QueryRowContext(ctx, `
-		with selected_project as (
-			select id, company_id
-			from user_projects
-			where id = $1
-		),
-		wallet_total as (
-			select coalesce(sum(w.paid_credits + w.promotional_credits), 0) as credits
-			from selected_project sp
-			join user_wallets w on
-				(sp.company_id is not null and w.company_id = sp.company_id and w.project_id is null)
-				or (sp.company_id is null and w.project_id = sp.id)
-		),
-		usage_total as (
-			select coalesce(sum(ue.customer_charge), 0) as credits
-			from selected_project sp
-			join user_projects p on
-				(sp.company_id is not null and p.company_id = sp.company_id)
-				or (sp.company_id is null and p.id = sp.id)
-			left join user_usage_events ue on ue.project_id = p.id
-		)
-		select wallet_total.credits, usage_total.credits
-		from wallet_total, usage_total`, projectID).Scan(&walletCredits, &usageCredits)
+		select coalesce(sum(w.paid_credits + w.promotional_credits), 0)
+		from user_projects p
+		join user_wallets w on
+			(p.company_id is not null and w.company_id = p.company_id and w.project_id is null)
+			or (p.company_id is null and w.project_id = p.id)
+		where p.id = $1`, projectID).Scan(&walletCredits)
 	if err != nil {
 		return 0, err
 	}
-	available := walletCredits - usageCredits
+	available := walletCredits
 	if available < 0 {
 		return 0, nil
 	}
@@ -1546,7 +1544,7 @@ func (a *App) projects(w http.ResponseWriter, r *http.Request) {
 	items := []response{}
 	for rows.Next() {
 		var id, name, orgID, org, walletID string
-		var paid, promo, creditsUsed int64
+		var paid, promo, creditsUsed float64
 		if err := rows.Scan(&id, &name, &orgID, &org, &walletID, &paid, &promo, &creditsUsed); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
@@ -1748,8 +1746,8 @@ func (a *App) createConversationBranch(w http.ResponseWriter, r *http.Request) {
 		role, content, metadata string
 		modelProfileID          sql.NullString
 		inferenceRequestID      sql.NullString
-		customerCharge          int64
-		providerCost            int64
+		customerCharge          float64
+		providerCost            float64
 		createdAt               time.Time
 	}
 	copies := []copiedMessage{}
@@ -1803,7 +1801,7 @@ func (a *App) messages(w http.ResponseWriter, r *http.Request) {
 	items := []response{}
 	for rows.Next() {
 		var id, role, content, modelProfileID, messageBranchID, inferenceRequestID, metadata string
-		var customerCharge, providerCost int64
+		var customerCharge, providerCost float64
 		var createdAt time.Time
 		if err := rows.Scan(&id, &role, &content, &modelProfileID, &messageBranchID, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -1836,7 +1834,8 @@ func (a *App) assets(w http.ResponseWriter, r *http.Request) {
 	items := []response{}
 	for rows.Next() {
 		var id, conversationID, branchID, assetType, assetOrigin, storagePath, storageProvider, bucketName, objectKey, downloadURL, mimeType, inferenceRequestID, metadata string
-		var sizeBytes, customerCharge, providerCost int64
+		var sizeBytes int64
+		var customerCharge, providerCost float64
 		var createdAt time.Time
 		if err := rows.Scan(&id, &conversationID, &branchID, &assetType, &assetOrigin, &storagePath, &storageProvider, &bucketName, &objectKey, &downloadURL, &mimeType, &sizeBytes, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
@@ -2060,6 +2059,7 @@ func (a *App) apiKeys(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		UserID             string   `json:"user_id"`
 		ProjectID          string   `json:"project_id"`
 		Name               string   `json:"name"`
 		Scopes             []string `json:"scopes"`
@@ -2096,13 +2096,19 @@ func (a *App) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresInDays > 0 {
 		expiresAt = time.Now().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
 	}
+	var creatorID any
+	if user, ok := currentUser(r.Context()); ok {
+		creatorID = user.ID
+	} else if a.Config.DevMode && req.UserID != "" {
+		creatorID = req.UserID
+	}
 	raw := "mk_" + randomHex(24)
 	prefix := raw[:10]
 	hash := hashAPIKey(raw)
 	id := "key_" + randomHex(12)
 	_, err := a.DB.ExecContext(r.Context(), `
-		insert into user_api_keys(id, project_id, name, prefix, key_hash, scopes, status, expires_at, environment, rate_limit_per_minute, budget_credits, allowed_ips)
-		values($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11)`, id, req.ProjectID, req.Name, prefix, hash, strings.Join(req.Scopes, ","), expiresAt, req.Environment, req.RateLimitPerMinute, req.BudgetCredits, strings.Join(req.AllowedIPs, ","))
+		insert into user_api_keys(id, project_id, name, prefix, key_hash, scopes, status, expires_at, environment, rate_limit_per_minute, budget_credits, allowed_ips, created_by_user_id)
+		values($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11, $12)`, id, req.ProjectID, req.Name, prefix, hash, strings.Join(req.Scopes, ","), expiresAt, req.Environment, req.RateLimitPerMinute, req.BudgetCredits, strings.Join(req.AllowedIPs, ","), creatorID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -2137,6 +2143,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, response{"error": response{"message": err.Error(), "type": "invalid_request_error", "code": err.Error()}})
 		return
 	}
+	r = r.WithContext(context.WithValue(r.Context(), billingKeyContextKey{}, hashAPIKey(bearerToken(r))))
 	var req struct {
 		Model          string        `json:"model"`
 		ConversationID string        `json:"conversation_id"`
@@ -2173,12 +2180,21 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if len(req.ResponseFormat) > 0 {
 		req.Parameters["response_format"] = req.ResponseFormat
 	}
+	if err := validateBillingParameters(req.Parameters); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": err.Error()})
+		return
+	}
 	route, err := a.selectModelRoute(r.Context(), req.Model, "default")
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
 		return
 	}
-	estimatedCharge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, estimateChatUsage(route, req.Parameters, req.Messages))
+	pricingRules, pricingRatio, err := a.requestPricing(r.Context(), route, req.Parameters)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, response{"error": err.Error()})
+		return
+	}
+	estimatedCharge, err := chargeForUsage(route, req.Parameters, estimateChatUsage(route, req.Parameters, req.Messages), pricingRules, pricingRatio)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
@@ -2192,7 +2208,9 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	reservationCaptured := false
 	defer func() {
 		if !reservationCaptured {
-			_ = a.releaseProjectCredits(context.WithoutCancel(r.Context()), requestID, reservation)
+			if err := a.releaseProjectCredits(context.WithoutCancel(r.Context()), requestID, reservation); err != nil && a.Logger != nil {
+				a.Logger.Error("inference_reservation_release_failed", "inference_request_id", requestID)
+			}
 		}
 	}()
 	failedRoutes := []selectedModelRoute{}
@@ -2207,7 +2225,27 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		fallback, fallbackErr := a.selectFallbackModelRoute(r.Context(), req.Model, "default", route.ID)
 		if fallbackErr == nil {
 			route = fallback
-			upstream, err = a.runChatUpstream(r.Context(), route, req.Messages, req.Parameters)
+			pricingRules, pricingRatio, err = a.requestPricing(r.Context(), route, req.Parameters)
+			if err == nil {
+				var fallbackEstimate requestCharge
+				fallbackEstimate, err = chargeForUsage(route, req.Parameters, estimateChatUsage(route, req.Parameters, req.Messages), pricingRules, pricingRatio)
+				if err == nil {
+					err = a.releaseProjectCredits(context.WithoutCancel(r.Context()), requestID, reservation)
+				}
+				if err == nil {
+					reservation = creditReservation{}
+					// A separate ledger identity keeps both reservation attempts auditable.
+					requestID = "req_" + randomHex(12)
+					var nextReservation creditReservation
+					nextReservation, err = a.reserveProjectCredits(r.Context(), projectID, requestID, fallbackEstimate.CustomerCharge)
+					if err == nil {
+						reservation = nextReservation
+					}
+				}
+			}
+			if err == nil {
+				upstream, err = a.runChatUpstream(r.Context(), route, req.Messages, req.Parameters)
+			}
 		}
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, response{"error": response{"message": err.Error(), "type": "server_error", "code": "upstream_failed"}, "provider": route.ProviderSlug, "channel_id": route.ChannelID, "attempts": len(failedRoutes)})
@@ -2219,71 +2257,88 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if len(req.Parameters) > 0 {
 		metadata["parameters"] = req.Parameters
 	}
-	charge, err := a.calculateRequestCharge(r.Context(), route, req.Parameters, upstream)
+	charge, err := chargeForUsage(route, req.Parameters, upstream, pricingRules, pricingRatio)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 		return
 	}
-	if err := a.captureProjectCredits(r.Context(), requestID, reservation, charge.CustomerCharge); err != nil {
-		writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "message": err.Error(), "required_credits": charge.CustomerCharge})
+	metadata["pricing"] = charge.Metadata
+	metadataRaw, _ := json.Marshal(metadata)
+	artifacts := []response{}
+	rehostedArtifacts := []response{}
+	if err := a.captureProjectCredits(r.Context(), requestID, reservation, charge.CustomerCharge, func(tx *sql.Tx) error {
+		_, err = tx.ExecContext(r.Context(), `
+		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
+		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
+			requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, charge.CustomerCharge-charge.ProviderCost, string(metadataRaw))
+		if err != nil {
+			return err
+		}
+		if route.ModelModality == "chat" || route.ChannelType == "google_gemini" {
+			content, rehostedArtifacts = a.rehostExternalFilesInContent(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, content, tx)
+			if route.ModelModality == "image" && len(rehostedArtifacts) == 0 {
+				return errors.New("generated_image_storage_failed")
+			}
+			if isGeneratedAssetModality(route.ModelModality) {
+				for index, artifact := range rehostedArtifacts {
+					artifactCharge := splitCredits(charge.CustomerCharge, int64(len(rehostedArtifacts)), int64(index))
+					artifactCost := splitCredits(charge.ProviderCost, int64(len(rehostedArtifacts)), int64(index))
+					if _, err := tx.ExecContext(r.Context(), `update user_workbench_assets set customer_charge = $1, provider_cost = $2 where id = $3`, artifactCharge, artifactCost, artifact["id"]); err != nil {
+						return err
+					}
+					artifact["customer_charge"] = artifactCharge
+					artifact["provider_cost"] = artifactCost
+				}
+			}
+		}
+		for index, failedRoute := range failedRoutes {
+			_, err = tx.ExecContext(r.Context(), `
+			insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
+			values($1, $2, $3, $4, $5, 'failed', null, null, 'upstream_error', $6)`,
+				"attempt_"+randomHex(12), requestID, failedRoute.ProviderID, failedRoute.ChannelID, failedRoute.ID, fmt.Sprintf(`{"message":%q}`, failedMessages[index]))
+			if err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(r.Context(), `
+		insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
+		values($1, $2, $3, $4, $5, 'succeeded', $6, $7, null, $8)`,
+			"attempt_"+randomHex(12), requestID, route.ProviderID, route.ChannelID, route.ID, upstream.LatencyMS, upstream.ProviderRequestID, fmt.Sprintf(`{"upstream_model_id":%q,"channel_name":%q,"channel_type":%q}`, route.UpstreamModelID, route.ChannelName, route.ChannelType))
+		if err != nil {
+			return err
+		}
+		if req.ConversationID != "" && len(req.Messages) > 0 {
+			last := req.Messages[len(req.Messages)-1]
+			if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Text(), content, charge.CustomerCharge, charge.ProviderCost, tx); err != nil {
+				return err
+			}
+		}
+		if err := a.recordUsageEvent(r.Context(), projectID, requestID, route, upstream, charge, metadataRaw, tx); err != nil {
+			return err
+		}
+		if isGeneratedAssetModality(route.ModelModality) && (strings.HasPrefix(route.BaseURL, "mock://") || route.ProviderSlug == "mock-provider") {
+			prompt := ""
+			if len(req.Messages) > 0 {
+				prompt = req.Messages[len(req.Messages)-1].Text()
+			}
+			artifacts, err = a.createMockGeneratedArtifacts(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, route, req.Parameters, prompt, charge, tx)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		if err.Error() == "insufficient_credits" {
+			writeJSON(w, http.StatusPaymentRequired, response{"error": "insufficient_credits", "required_credits": charge.CustomerCharge, "request_id": requestID})
+			return
+		}
+		if a.Logger != nil {
+			a.Logger.Error("inference_settlement_failed", "inference_request_id", requestID)
+		}
+		writeJSON(w, http.StatusInternalServerError, response{"error": "inference_settlement_failed", "request_id": requestID})
 		return
 	}
 	reservationCaptured = true
-	metadata["pricing"] = charge.Metadata
-	metadataRaw, _ := json.Marshal(metadata)
-	_, err = a.DB.ExecContext(r.Context(), `
-		insert into user_inference_requests(id, project_id, model_slug, model_profile_id, route_id, channel_id, provider_slug, status, input_units, output_units, customer_charge, provider_cost, margin, metadata)
-		values($1, $2, $3, $4, $5, $6, $7, 'succeeded', $8, $9, $10, $11, $12, $13)`,
-		requestID, projectID, route.ModelSlug, nullIfEmpty(route.ModelProfileID), route.ID, route.ChannelID, route.ProviderSlug, upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, charge.CustomerCharge-charge.ProviderCost, string(metadataRaw))
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-		return
-	}
-	rehostedArtifacts := []response{}
-	if route.ModelModality == "chat" || route.ChannelType == "google_gemini" {
-		content, rehostedArtifacts = a.rehostExternalFilesInContent(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, content)
-	}
-	for index, failedRoute := range failedRoutes {
-		_, err = a.DB.ExecContext(r.Context(), `
-			insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
-			values($1, $2, $3, $4, $5, 'failed', null, null, 'upstream_error', $6)`,
-			"attempt_"+randomHex(12), requestID, failedRoute.ProviderID, failedRoute.ChannelID, failedRoute.ID, fmt.Sprintf(`{"message":%q}`, failedMessages[index]))
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-			return
-		}
-	}
-	_, err = a.DB.ExecContext(r.Context(), `
-		insert into user_provider_attempts(id, inference_request_id, provider_id, channel_id, route_id, status, latency_ms, provider_request_id, error_class, metadata)
-		values($1, $2, $3, $4, $5, 'succeeded', $6, $7, null, $8)`,
-		"attempt_"+randomHex(12), requestID, route.ProviderID, route.ChannelID, route.ID, upstream.LatencyMS, upstream.ProviderRequestID, fmt.Sprintf(`{"upstream_model_id":%q,"channel_name":%q,"channel_type":%q}`, route.UpstreamModelID, route.ChannelName, route.ChannelType))
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-		return
-	}
-	if req.ConversationID != "" && len(req.Messages) > 0 {
-		last := req.Messages[len(req.Messages)-1]
-		if err := a.saveConversationTurn(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, req.Model, last.Text(), content, charge.CustomerCharge, charge.ProviderCost); err != nil {
-			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-			return
-		}
-	}
-	if err := a.recordUsageEvent(r.Context(), projectID, requestID, route, upstream, charge, metadataRaw); err != nil {
-		writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-		return
-	}
-	artifacts := []response{}
-	if isGeneratedAssetModality(route.ModelModality) && (strings.HasPrefix(route.BaseURL, "mock://") || route.ProviderSlug == "mock-provider") {
-		prompt := ""
-		if len(req.Messages) > 0 {
-			prompt = req.Messages[len(req.Messages)-1].Text()
-		}
-		artifacts, err = a.createMockGeneratedArtifacts(r.Context(), projectID, req.ConversationID, req.BranchID, requestID, route, req.Parameters, prompt, charge)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
-			return
-		}
-	}
 	artifacts = append(artifacts, rehostedArtifacts...)
 	completion := response{
 		"id":        requestID,
@@ -2302,9 +2357,7 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func estimateChatUsage(route selectedModelRoute, parameters response, messages []chatMessage) upstreamChatResult {
-	if route.ModelModality != "chat" {
-		return upstreamChatResult{}
-	}
+	// Media models may also have input/output token rules.
 	promptTokens := 0
 	for _, message := range messages {
 		// A conservative local estimate is enough for reservation; provider usage
@@ -2313,7 +2366,7 @@ func estimateChatUsage(route selectedModelRoute, parameters response, messages [
 	}
 	return upstreamChatResult{
 		PromptTokens:     promptTokens,
-		CompletionTokens: int(intParameter(parameters, "max_completion_tokens", intParameter(parameters, "max_tokens", 512))),
+		CompletionTokens: int(intParameter(parameters, "max_completion_tokens", intParameter(parameters, "max_tokens", 1024))),
 	}
 }
 
@@ -2326,7 +2379,7 @@ func writeChatCompletionStream(w http.ResponseWriter, completion response, model
 	chunks := []response{
 		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"role": "assistant"}, "finish_reason": nil}}},
 		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"content": content}, "finish_reason": nil}}},
-		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{}, "finish_reason": "stop"}}, "usage": response{"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens, "total_tokens": usage.PromptTokens + usage.CompletionTokens}},
+		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{}, "finish_reason": "stop"}}, "usage": response{"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens, "total_tokens": usage.PromptTokens + usage.CompletionTokens, "customer_charge": completion["usage"].(response)["customer_charge"], "provider_cost": completion["usage"].(response)["provider_cost"]}},
 	}
 	for _, chunk := range chunks {
 		raw, _ := json.Marshal(chunk)
@@ -2339,8 +2392,8 @@ func writeChatCompletionStream(w http.ResponseWriter, completion response, model
 }
 
 type requestCharge struct {
-	CustomerCharge int64
-	ProviderCost   int64
+	CustomerCharge float64
+	ProviderCost   float64
 	Metadata       response
 }
 
@@ -2356,26 +2409,79 @@ type priceRule struct {
 }
 
 func (a *App) calculateRequestCharge(ctx context.Context, route selectedModelRoute, parameters response, usage upstreamChatResult) (requestCharge, error) {
+	rules, ratio, err := a.requestPricing(ctx, route, parameters)
+	if err != nil {
+		return requestCharge{}, err
+	}
+	return chargeForUsage(route, parameters, usage, rules, ratio)
+}
+
+func (a *App) requestPricing(ctx context.Context, route selectedModelRoute, parameters response) ([]priceRule, float64, error) {
+	if err := validateBillingParameters(parameters); err != nil {
+		return nil, 0, err
+	}
+	if route.ChannelType == "google_gemini" && route.ModelModality == "image" && intParameter(parameters, "output_count", 1) != 1 {
+		return nil, 0, errors.New("gemini_image_output_count_must_be_one")
+	}
 	rules, err := a.priceRulesForRoute(ctx, route)
 	if err != nil {
-		return requestCharge{}, err
+		return nil, 0, err
 	}
 	if len(rules) == 0 {
-		return requestCharge{CustomerCharge: 1, Metadata: response{"source": "fallback", "reason": "no_price_rule"}}, nil
+		return nil, 0, errors.New("no_active_price_rule")
+	}
+	rules, err = selectPriceRules(rules, parameters)
+	if err != nil {
+		return nil, 0, err
 	}
 	ratio, err := a.creditRatio(ctx)
-	if err != nil {
-		return requestCharge{}, err
+	return rules, ratio, err
+}
+
+func chargeForUsage(route selectedModelRoute, parameters response, usage upstreamChatResult, rules []priceRule, ratio float64) (requestCharge, error) {
+	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 {
+		return requestCharge{}, errors.New("invalid_provider_usage")
 	}
 	var customerTotal float64
 	var providerTotal float64
 	applied := []response{}
 	for _, rule := range rules {
 		units := billingUnits(rule, parameters, usage)
+		if math.IsNaN(units) || math.IsInf(units, 0) {
+			return requestCharge{}, fmt.Errorf("unsupported_billing_unit: %s", rule.PriceUnit)
+		}
 		if units <= 0 {
 			continue
 		}
-		customerTotal += rule.Price * units
+		var priceMetadata response
+		if err := json.Unmarshal([]byte(rule.PriceMetadata), &priceMetadata); err != nil {
+			return requestCharge{}, fmt.Errorf("invalid_price_metadata: %s", rule.ID)
+		}
+		multiplier := 1.0
+		if raw, ok := priceMetadata["aspect_ratio_multipliers"]; ok {
+			multipliers, valid := raw.(map[string]any)
+			if !valid {
+				return requestCharge{}, errors.New("invalid_aspect_ratio_prices")
+			}
+			ratio, _ := parameters["aspect_ratio"].(string)
+			if ratio == "" {
+				ratio = "square"
+			}
+			value, ok := multipliers[ratio].(float64)
+			if !ok || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				return requestCharge{}, errors.New("unsupported_priced_aspect_ratio")
+			}
+			multiplier = value
+		}
+		customerTotal += rule.Price * units * multiplier
+		if enabled, _ := parameters["hd_enhancement"].(bool); enabled {
+			if fee, ok := priceMetadata["hd_enhancement_flat_fee"].(float64); ok {
+				if fee < 0 {
+					return requestCharge{}, errors.New("invalid_hd_price")
+				}
+				customerTotal += fee * units
+			}
+		}
 		providerTotal += rule.ProviderPrice * ratio * units
 		applied = append(applied, response{
 			"price_rule_id":   rule.ID,
@@ -2389,8 +2495,11 @@ func (a *App) calculateRequestCharge(ctx context.Context, route selectedModelRou
 			"price_metadata":  rule.PriceMetadata,
 		})
 	}
-	customerCharge := ceilCredits(customerTotal)
-	providerCost := ceilCredits(providerTotal)
+	if math.IsNaN(customerTotal) || math.IsInf(customerTotal, 0) || math.IsNaN(providerTotal) || math.IsInf(providerTotal, 0) || customerTotal >= 1e12 || providerTotal >= 1e12 {
+		return requestCharge{}, errors.New("billing_amount_out_of_range")
+	}
+	customerCharge := roundCredits(customerTotal)
+	providerCost := roundCredits(providerTotal)
 	return requestCharge{
 		CustomerCharge: customerCharge,
 		ProviderCost:   providerCost,
@@ -2412,6 +2521,18 @@ func (a *App) priceRulesForRoute(ctx context.Context, route selectedModelRoute) 
 		join sys_models m on m.id = pr.model_id
 		where m.slug = $1
 			and pr.status = 'active'
+			and pr.effective_at <= current_timestamp
+			and pr.currency = 'CREDIT' and pr.provider_currency = 'USD'
+			and not exists (
+				select 1 from sys_price_rules newer
+				where newer.model_id = pr.model_id
+					and coalesce(newer.model_profile_id, '') = coalesce(pr.model_profile_id, '')
+					and newer.price_type = pr.price_type and newer.price_unit = pr.price_unit
+					and newer.pricing_variant = pr.pricing_variant
+					and newer.currency = pr.currency and newer.provider_currency = pr.provider_currency
+					and newer.status = 'active' and newer.effective_at <= current_timestamp
+					and newer.effective_at > pr.effective_at
+			)
 			and (coalesce(pr.model_profile_id, '') = $2 or pr.model_profile_id is null)
 		order by profile_matched desc, pr.price_seq_id asc`, route.ModelSlug, route.ModelProfileID)
 	if err != nil {
@@ -2432,11 +2553,14 @@ func (a *App) priceRulesForRoute(ctx context.Context, route selectedModelRoute) 
 func billingUnits(rule priceRule, parameters response, usage upstreamChatResult) float64 {
 	switch rule.PriceUnit {
 	case "1k_tokens":
-		tokens := usage.CompletionTokens
-		if rule.PriceType == "input" {
-			tokens = usage.PromptTokens
+		switch rule.PriceType {
+		case "input":
+			return float64(usage.PromptTokens) / 1000
+		case "output":
+			return float64(usage.CompletionTokens) / 1000
+		default:
+			return math.NaN()
 		}
-		return float64(tokens) / 1000
 	case "image":
 		return float64(intParameter(parameters, "output_count", 1))
 	case "second_video":
@@ -2448,7 +2572,7 @@ func billingUnits(rule priceRule, parameters response, usage upstreamChatResult)
 	case "song", "clip", "request":
 		return 1
 	default:
-		return 1
+		return math.NaN()
 	}
 }
 
@@ -2478,18 +2602,23 @@ func intParameter(parameters response, key string, fallback int64) int64 {
 	return fallback
 }
 
-func ceilCredits(value float64) int64 {
+func roundCredits(value float64) float64 {
 	if value <= 0 {
 		return 0
 	}
-	return int64(math.Ceil(value - 0.000000001))
+	return math.Round(value*1e8) / 1e8
 }
 
-func (a *App) recordUsageEvent(ctx context.Context, projectID, inferenceRequestID string, route selectedModelRoute, upstream upstreamChatResult, charge requestCharge, metadata []byte) error {
-	_, err := a.DB.ExecContext(ctx, `
+func (a *App) recordUsageEvent(ctx context.Context, projectID, inferenceRequestID string, route selectedModelRoute, upstream upstreamChatResult, charge requestCharge, metadata []byte, executors ...sqlExecutor) error {
+	var db sqlExecutor = a.DB
+	if len(executors) > 0 {
+		db = executors[0]
+	}
+
+	_, err := db.ExecContext(ctx, `
 		insert into user_usage_events(id, project_id, actor_user_id, inference_request_id, model_slug, provider_slug, event_type, input_tokens, output_tokens, customer_charge, provider_cost, metadata)
-		values($1, $2, null, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		"usage_"+randomHex(12), projectID, inferenceRequestID, route.ModelSlug, route.ProviderSlug, usageEventType(route.ModelModality), upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, string(metadata))
+		values($1, $2, (select created_by_user_id from user_api_keys where key_hash = $12), $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		"usage_"+randomHex(12), projectID, inferenceRequestID, route.ModelSlug, route.ProviderSlug, usageEventType(route.ModelModality), upstream.PromptTokens, upstream.CompletionTokens, charge.CustomerCharge, charge.ProviderCost, string(metadata), ctx.Value(billingKeyContextKey{}))
 	return err
 }
 
@@ -2510,9 +2639,14 @@ func isGeneratedAssetModality(modality string) bool {
 	return modality == "image" || modality == "video" || modality == "audio"
 }
 
-func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID string, route selectedModelRoute, parameters response, prompt string, charge requestCharge) ([]response, error) {
+func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID string, route selectedModelRoute, parameters response, prompt string, charge requestCharge, executors ...sqlExecutor) ([]response, error) {
+	var db sqlExecutor = a.DB
+	if len(executors) > 0 {
+		db = executors[0]
+	}
+
 	if conversationID != "" && branchID == "" {
-		resolved, err := a.defaultBranchID(ctx, conversationID)
+		resolved, err := a.defaultBranchID(ctx, conversationID, db)
 		if err != nil {
 			return nil, err
 		}
@@ -2555,7 +2689,7 @@ func (a *App) createMockGeneratedArtifacts(ctx context.Context, projectID, conve
 			"asset_index":          i + 1,
 			"asset_count":          count,
 		})
-		_, err = a.DB.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
 			insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, inference_request_id, customer_charge, provider_cost, metadata)
 			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 			assetID, projectID, conversationID, branchID, route.ModelModality, storagePath, a.storageProvider(), bucket, objectKey, downloadURL, mimeType, sizeBytes, inferenceRequestID, assetCharge, assetCost, truncateString(string(metadataRaw), 3900))
@@ -2585,9 +2719,14 @@ const maxRehostedAssetBytes = 25 * 1024 * 1024
 // uploads it to our own object storage, and rewrites the reference in the message
 // to an internal download link so the browser never has to trust or keep talking
 // to the original external host.
-func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, content string) (string, []response) {
+func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, content string, executors ...sqlExecutor) (string, []response) {
+	var db sqlExecutor = a.DB
+	if len(executors) > 0 {
+		db = executors[0]
+	}
+
 	if conversationID != "" && branchID == "" {
-		if resolved, err := a.defaultBranchID(ctx, conversationID); err == nil {
+		if resolved, err := a.defaultBranchID(ctx, conversationID, db); err == nil {
 			branchID = resolved
 		}
 	}
@@ -2620,7 +2759,7 @@ func (a *App) rehostExternalFilesInContent(ctx context.Context, projectID, conve
 		}
 		downloadURL := "/api/v1/assets/" + assetID + "/download/" + filename
 		metadataRaw, _ := json.Marshal(response{"rehosted_from": truncateString(sourceRef, 1000), "inference_request_id": inferenceRequestID})
-		_, err = a.DB.ExecContext(ctx, `
+		_, err = db.ExecContext(ctx, `
 			insert into user_workbench_assets(id, project_id, conversation_id, branch_id, asset_type, asset_origin, storage_path, storage_provider, bucket_name, object_key, download_url, mime_type, size_bytes, inference_request_id, metadata)
 			values($1, $2, nullif($3, ''), nullif($4, ''), $5, 'generated', $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 			assetID, projectID, conversationID, branchID, assetType, storagePath, a.storageProvider(), bucket, objectKey, downloadURL, contentType, sizeBytes, inferenceRequestID, truncateString(string(metadataRaw), 3900))
@@ -2769,9 +2908,14 @@ func extensionForContentType(contentType string) string {
 	}
 }
 
-func (a *App) defaultBranchID(ctx context.Context, conversationID string) (string, error) {
+func (a *App) defaultBranchID(ctx context.Context, conversationID string, executors ...sqlExecutor) (string, error) {
+	var db sqlExecutor = a.DB
+	if len(executors) > 0 {
+		db = executors[0]
+	}
+
 	var branchID string
-	err := a.DB.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		select id
 		from user_conversation_branches
 		where conversation_id = $1
@@ -2844,13 +2988,13 @@ func mockGeneratedImageSVG(route selectedModelRoute, parameters response, prompt
 `, xmlEscape(title), xmlEscape(route.UpstreamModelID), xmlEscape(size), xmlEscape(assetID))
 }
 
-func splitCredits(total, count, index int64) int64 {
+func splitCredits(total float64, count, index int64) float64 {
 	if count <= 1 {
 		return total
 	}
-	base := total / count
+	base := math.Floor(total*1e8/float64(count)) / 1e8
 	if index == 0 {
-		return base + total%count
+		return roundCredits(total - base*float64(count-1))
 	}
 	return base
 }
@@ -3005,7 +3149,7 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 			} `json:"content"`
 			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
-		UsageMetadata struct {
+		UsageMetadata *struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
 			TotalTokenCount      int `json:"totalTokenCount"`
@@ -3048,14 +3192,11 @@ func (a *App) callGeminiGenerateContent(ctx context.Context, route selectedModel
 	if content == "" {
 		return upstreamChatResult{}, errors.New("gemini returned no text or generated artifact")
 	}
+	if parsed.UsageMetadata == nil || parsed.UsageMetadata.PromptTokenCount < 0 || parsed.UsageMetadata.CandidatesTokenCount < 0 {
+		return upstreamChatResult{}, errors.New("gemini response has missing or invalid usage")
+	}
 	promptTokens := parsed.UsageMetadata.PromptTokenCount
 	completionTokens := parsed.UsageMetadata.CandidatesTokenCount
-	if promptTokens == 0 {
-		promptTokens = len(messages)
-	}
-	if completionTokens == 0 {
-		completionTokens = 0 // Never bill base64 image bytes as text tokens.
-	}
 	return upstreamChatResult{
 		Content:           content,
 		PromptTokens:      promptTokens,
@@ -3170,13 +3311,18 @@ func (a *App) selectFallbackModelRoute(ctx context.Context, requestedModel, rout
 	return route, err
 }
 
-func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, model, prompt, answer string, customerCharge, providerCost int64) error {
+func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationID, branchID, inferenceRequestID, model, prompt, answer string, customerCharge, providerCost float64, executors ...sqlExecutor) error {
+	var db sqlExecutor = a.DB
+	if len(executors) > 0 {
+		db = executors[0]
+	}
+
 	var existing string
-	if err := a.DB.QueryRowContext(ctx, `select id from user_conversations where id = $1 and project_id = $2`, conversationID, projectID).Scan(&existing); err != nil {
+	if err := db.QueryRowContext(ctx, `select id from user_conversations where id = $1 and project_id = $2`, conversationID, projectID).Scan(&existing); err != nil {
 		return err
 	}
 	if branchID == "" {
-		if err := a.DB.QueryRowContext(ctx, `
+		if err := db.QueryRowContext(ctx, `
 			select id
 			from user_conversation_branches
 			where conversation_id = $1
@@ -3186,13 +3332,13 @@ func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationI
 		}
 	} else {
 		var existingBranch string
-		if err := a.DB.QueryRowContext(ctx, `select id from user_conversation_branches where id = $1 and conversation_id = $2`, branchID, conversationID).Scan(&existingBranch); err != nil {
+		if err := db.QueryRowContext(ctx, `select id from user_conversation_branches where id = $1 and conversation_id = $2`, branchID, conversationID).Scan(&existingBranch); err != nil {
 			return err
 		}
 	}
 	userMessageID := "message_" + randomHex(12)
 	assistantMessageID := "message_" + randomHex(12)
-	_, err := a.DB.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata)
 		values($1, $2, $3, 'user', $4, null, null, 0, 0, '{}'),
 			($5, $2, $3, 'assistant', $6, null, $7, $8, $9, $10)`,
@@ -3200,7 +3346,7 @@ func (a *App) saveConversationTurn(ctx context.Context, projectID, conversationI
 	if err != nil {
 		return err
 	}
-	_, err = a.DB.ExecContext(ctx, `update user_conversations set updated_at = current_timestamp where id = $1`, conversationID)
+	_, err = db.ExecContext(ctx, `update user_conversations set updated_at = current_timestamp where id = $1`, conversationID)
 	return err
 }
 
@@ -3231,11 +3377,11 @@ func (a *App) authenticateAPIKey(r *http.Request) (string, error) {
 		return "", errors.New("ip_not_allowed")
 	}
 	if budget.Valid {
-		var used int64
+		var used float64
 		if err := a.DB.QueryRowContext(r.Context(), `select coalesce(sum(customer_charge), 0) from user_usage_events where project_id = $1 and created_at >= date_trunc('month', current_timestamp)`, projectID).Scan(&used); err != nil {
 			return "", err
 		}
-		if used >= budget.Int64 {
+		if used >= float64(budget.Int64) {
 			return "", errors.New("api_key_budget_exceeded")
 		}
 	}

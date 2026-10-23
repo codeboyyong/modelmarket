@@ -434,20 +434,23 @@ func (a *App) createStripeRefund(ctx context.Context, paymentIntent, paymentID s
 
 type creditReservation struct {
 	WalletID           string
-	PromotionalCredits int64
-	PaidCredits        int64
+	PromotionalCredits float64
+	PaidCredits        float64
 }
 
-func (r creditReservation) Total() int64 {
-	return r.PromotionalCredits + r.PaidCredits
+func (r creditReservation) Total() float64 {
+	return roundCredits(r.PromotionalCredits + r.PaidCredits)
 }
 
 // reserveProjectCredits atomically removes credits from the available wallet
 // balance before provider dispatch. The wallet row lock prevents concurrent
 // requests from reserving the same credits.
-func (a *App) reserveProjectCredits(ctx context.Context, projectID, requestID string, credits int64) (creditReservation, error) {
+func (a *App) reserveProjectCredits(ctx context.Context, projectID, requestID string, credits float64) (creditReservation, error) {
 	reservation := creditReservation{}
-	if credits <= 0 {
+	if credits < 0 {
+		return reservation, errors.New("invalid_credit_reservation")
+	}
+	if credits == 0 {
 		return reservation, nil
 	}
 	tx, err := a.DB.BeginTx(ctx, nil)
@@ -455,7 +458,7 @@ func (a *App) reserveProjectCredits(ctx context.Context, projectID, requestID st
 		return reservation, err
 	}
 	defer tx.Rollback()
-	var paid, promotional int64
+	var paid, promotional float64
 	err = tx.QueryRowContext(ctx, `
 		select w.id, w.paid_credits, w.promotional_credits
 		from user_projects p
@@ -466,14 +469,14 @@ func (a *App) reserveProjectCredits(ctx context.Context, projectID, requestID st
 	if err != nil {
 		return reservation, err
 	}
-	if paid+promotional < credits {
+	if roundCredits(paid+promotional) < credits {
 		return reservation, errors.New("insufficient_credits")
 	}
 	reservation.PromotionalCredits = credits
 	if reservation.PromotionalCredits > promotional {
 		reservation.PromotionalCredits = promotional
 	}
-	reservation.PaidCredits = credits - reservation.PromotionalCredits
+	reservation.PaidCredits = roundCredits(credits - reservation.PromotionalCredits)
 	if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits - $1, paid_credits = paid_credits - $2, updated_at = current_timestamp where id = $3`, reservation.PromotionalCredits, reservation.PaidCredits, reservation.WalletID); err != nil {
 		return reservation, err
 	}
@@ -518,11 +521,11 @@ func (a *App) releaseProjectCredits(ctx context.Context, requestID string, reser
 // captureProjectCredits reconciles the reservation with the final charge. A
 // smaller charge releases the unused portion; a larger charge atomically draws
 // the difference only if the wallet still has sufficient funds.
-func (a *App) captureProjectCredits(ctx context.Context, requestID string, reservation creditReservation, actual int64) error {
+func (a *App) captureProjectCredits(ctx context.Context, requestID string, reservation creditReservation, actual float64, persist ...func(*sql.Tx) error) error {
 	if actual < 0 {
 		return errors.New("invalid_credit_charge")
 	}
-	if actual == 0 && reservation.Total() == 0 {
+	if actual == 0 && reservation.Total() == 0 && len(persist) == 0 {
 		return nil
 	}
 	tx, err := a.DB.BeginTx(ctx, nil)
@@ -530,15 +533,31 @@ func (a *App) captureProjectCredits(ctx context.Context, requestID string, reser
 		return err
 	}
 	defer tx.Rollback()
-	var paid, promotional int64
+	if err := captureProjectCreditsTx(ctx, tx, requestID, reservation, actual); err != nil {
+		return err
+	}
+	for _, write := range persist {
+		if err := write(tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func captureProjectCreditsTx(ctx context.Context, tx *sql.Tx, requestID string, reservation creditReservation, actual float64) error {
+	if actual == 0 && reservation.Total() == 0 {
+		return nil
+	}
+	var err error
+	var paid, promotional float64
 	if err = tx.QueryRowContext(ctx, `select paid_credits, promotional_credits from user_wallets where id = $1 for update`, reservation.WalletID).Scan(&paid, &promotional); err != nil {
 		return err
 	}
 	reserved := reservation.Total()
 	if actual < reserved {
-		unused := reserved - actual
+		unused := roundCredits(reserved - actual)
 		releasePaid := min(unused, reservation.PaidCredits)
-		releasePromo := unused - releasePaid
+		releasePromo := roundCredits(unused - releasePaid)
 		if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits + $1, paid_credits = paid_credits + $2, updated_at = current_timestamp where id = $3`, releasePromo, releasePaid, reservation.WalletID); err != nil {
 			return err
 		}
@@ -553,12 +572,12 @@ func (a *App) captureProjectCredits(ctx context.Context, requestID string, reser
 			}
 		}
 	} else if actual > reserved {
-		extra := actual - reserved
-		if paid+promotional < extra {
+		extra := roundCredits(actual - reserved)
+		if roundCredits(paid+promotional) < extra {
 			return errors.New("insufficient_credits")
 		}
 		extraPromo := min(extra, promotional)
-		extraPaid := extra - extraPromo
+		extraPaid := roundCredits(extra - extraPromo)
 		if _, err = tx.ExecContext(ctx, `update user_wallets set promotional_credits = promotional_credits - $1, paid_credits = paid_credits - $2, updated_at = current_timestamp where id = $3`, extraPromo, extraPaid, reservation.WalletID); err != nil {
 			return err
 		}
@@ -573,11 +592,11 @@ func (a *App) captureProjectCredits(ctx context.Context, requestID string, reser
 			}
 		}
 	}
-	_, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'capture',0,'mixed','posted','inference reservation captured',$3,$4)`, "ledger_"+randomHex(8), reservation.WalletID, "capture_"+requestID, fmt.Sprintf(`{"reserved":%d,"actual":%d}`, reserved, actual))
+	_, err = tx.ExecContext(ctx, `insert into user_ledger_transactions(id,wallet_id,transaction_type,amount,credit_type,status,reason,idempotency_key,metadata) values($1,$2,'capture',0,'mixed','posted','inference reservation captured',$3,$4)`, "ledger_"+randomHex(8), reservation.WalletID, "capture_"+requestID, fmt.Sprintf(`{"reserved":%g,"actual":%g}`, reserved, actual))
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func nullTime(value sql.NullTime) any {
