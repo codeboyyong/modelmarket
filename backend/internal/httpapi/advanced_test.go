@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,11 +104,28 @@ func TestUploadIntentRejectsUnsafeTypeAndLargeFile(t *testing.T) {
 	for _, body := range []string{
 		`{"project_id":"project-1","filename":"payload.svg","content_type":"image/svg+xml","size_bytes":10}`,
 		`{"project_id":"project-1","filename":"large.png","content_type":"image/png","size_bytes":26214401}`,
+		`{"project_id":"project-1","filename":"large.txt","content_type":"text/plain","size_bytes":10485761}`,
 	} {
 		recorder := httptest.NewRecorder()
 		app.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/assets/upload-intent", bytes.NewBufferString(body)))
 		if recorder.Code < 400 {
 			t.Fatalf("body=%s status=%d", body, recorder.Code)
+		}
+	}
+}
+
+func TestAssetTypeForSafeTextUploads(t *testing.T) {
+	for _, contentType := range []string{
+		"text/plain", "text/markdown", "text/csv", "text/tab-separated-values",
+		"application/json", "application/xml", "text/xml; charset=utf-8",
+	} {
+		if got := assetTypeForContentType(contentType); got != "upload_document" {
+			t.Fatalf("assetTypeForContentType(%q)=%q", contentType, got)
+		}
+	}
+	for _, contentType := range []string{"text/html", "application/javascript", "image/svg+xml"} {
+		if got := assetTypeForContentType(contentType); got != "" {
+			t.Fatalf("unsafe assetTypeForContentType(%q)=%q", contentType, got)
 		}
 	}
 }
@@ -180,6 +199,8 @@ func TestDeleteAsset(t *testing.T) {
 	mock.ExpectQuery("select coalesce\\(object_key").WithArgs("asset-1").WillReturnRows(sqlmock.NewRows([]string{"object_key"}).AddRow(""))
 	mock.ExpectBegin()
 	mock.ExpectExec("delete from user_message_attachments").WithArgs("asset-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("delete from user_embedding_records").WithArgs("asset-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("delete from user_file_chunks").WithArgs("asset-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("delete from user_file_extractions").WithArgs("asset-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("delete from user_workbench_assets").WithArgs("asset-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -227,6 +248,9 @@ func TestWriteChatCompletionStream(t *testing.T) {
 	if !strings.Contains(body, `"object":"chat.completion.chunk"`) || !strings.Contains(body, "data: [DONE]") {
 		t.Fatalf("unexpected stream: %s", body)
 	}
+	if !strings.Contains(body, `"customer_charge":0`) || !strings.Contains(body, `"provider_cost":0`) {
+		t.Fatalf("missing safe default usage values: %s", body)
+	}
 }
 
 func TestReserveProjectCreditsUsesPromotionalCreditsFirst(t *testing.T) {
@@ -264,6 +288,89 @@ func TestReleaseProjectCreditsRestoresReservation(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAsyncReservationPersistsJobStateInSameTransaction(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectQuery("select w.id, w.paid_credits, w.promotional_credits").WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "paid_credits", "promotional_credits"}).AddRow("wallet-1", 10.0, 0.0))
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(0.0, 4.0, "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", -4.0, "reserve_paid_req_async").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_async_jobs set billing_status").WithArgs("job-1", "wallet-1", 0.0, 4.0).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	reservation, err := app.reserveProjectCredits(context.Background(), "project-1", "req_async", 4, func(tx *sql.Tx, reserved creditReservation) error {
+		_, callbackErr := tx.ExecContext(context.Background(), "update user_async_jobs set billing_status", "job-1", reserved.WalletID, reserved.PromotionalCredits, reserved.PaidCredits)
+		return callbackErr
+	})
+	if err != nil || reservation.PaidCredits != 4 {
+		t.Fatalf("reservation=%+v err=%v", reservation, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAsyncReleaseClearsJobReservationInSameTransaction(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec("update user_wallets set promotional_credits").WithArgs(1.0, 2.0, "wallet-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", 1.0, "release_promo_req_async").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WithArgs(sqlmock.AnyArg(), "wallet-1", 2.0, "release_paid_req_async").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_async_jobs set billing_status").WithArgs("job-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := app.releaseProjectCredits(context.Background(), "req_async", creditReservation{WalletID: "wallet-1", PromotionalCredits: 1, PaidCredits: 2}, func(tx *sql.Tx) error {
+		_, callbackErr := tx.ExecContext(context.Background(), "update user_async_jobs set billing_status", "job-1")
+		return callbackErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAsyncReservationRollsBackWhenJobPersistenceFails(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectQuery("select w.id, w.paid_credits, w.promotional_credits").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "paid", "promo"}).AddRow("wallet-1", 10.0, 0.0))
+	mock.ExpectExec("update user_wallets").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_async_jobs").WillReturnError(errors.New("job row unavailable"))
+	mock.ExpectRollback()
+
+	_, err := app.reserveProjectCredits(context.Background(), "project-1", "req_async", 2, func(tx *sql.Tx, reserved creditReservation) error {
+		_, callbackErr := tx.ExecContext(context.Background(), "update user_async_jobs", reserved.WalletID)
+		return callbackErr
+	})
+	if err == nil {
+		t.Fatal("reservation must roll back when job state cannot be persisted")
+	}
+}
+
+func TestAsyncReleaseRollsBackWhenJobCleanupFails(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	mock.ExpectBegin()
+	mock.ExpectExec("update user_wallets").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into user_ledger_transactions").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update user_async_jobs").WillReturnError(errors.New("job row unavailable"))
+	mock.ExpectRollback()
+
+	err := app.releaseProjectCredits(context.Background(), "req_async", creditReservation{WalletID: "wallet-1", PaidCredits: 2}, func(tx *sql.Tx) error {
+		_, callbackErr := tx.ExecContext(context.Background(), "update user_async_jobs")
+		return callbackErr
+	})
+	if err == nil {
+		t.Fatal("release must roll back when job reservation cannot be cleared")
 	}
 }
 

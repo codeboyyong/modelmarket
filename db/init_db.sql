@@ -485,6 +485,26 @@ CREATE TABLE IF NOT EXISTS user_file_extractions (
   CONSTRAINT fk_file_extractions_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id)
 );
 
+-- User table: bounded retrieval chunks and locally computed embedding vectors.
+CREATE TABLE IF NOT EXISTS user_file_chunks (
+  id VARCHAR(64) PRIMARY KEY,
+  extraction_id VARCHAR(64) NOT NULL,
+  asset_id VARCHAR(64) NOT NULL,
+  project_id VARCHAR(64) NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  char_count INTEGER NOT NULL,
+  token_estimate INTEGER NOT NULL,
+  embedding_model VARCHAR(255) NOT NULL,
+  embedding_data TEXT NOT NULL,
+  metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_file_chunks_extraction FOREIGN KEY (extraction_id) REFERENCES user_file_extractions(id),
+  CONSTRAINT fk_file_chunks_asset FOREIGN KEY (asset_id) REFERENCES user_workbench_assets(id),
+  CONSTRAINT fk_file_chunks_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT uq_file_chunks_extraction_index UNIQUE (extraction_id, chunk_index)
+);
+
 -- User table: embedding references created from project content.
 CREATE TABLE IF NOT EXISTS user_embedding_records (
   id VARCHAR(64) PRIMARY KEY,
@@ -566,14 +586,36 @@ CREATE TABLE IF NOT EXISTS user_usage_events (
 CREATE TABLE IF NOT EXISTS user_async_jobs (
   id VARCHAR(64) PRIMARY KEY,
   project_id VARCHAR(64) NOT NULL,
+  actor_user_id VARCHAR(64),
   job_type VARCHAR(64) NOT NULL,
   status VARCHAR(64) NOT NULL,
+  progress INTEGER NOT NULL DEFAULT 0,
   model_slug VARCHAR(255),
   provider_slug VARCHAR(255),
+  inference_request_id VARCHAR(64),
+  reservation_wallet_id VARCHAR(64),
+  reservation_promotional_credits NUMERIC(24,8) NOT NULL DEFAULT 0,
+  reservation_paid_credits NUMERIC(24,8) NOT NULL DEFAULT 0,
+  billing_status VARCHAR(64) NOT NULL DEFAULT 'unreserved',
+  provider_job_id VARCHAR(255),
+  provider_status VARCHAR(128),
+  next_provider_poll_at TIMESTAMP,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  result_metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
+  error_code VARCHAR(255),
+  error_message VARCHAR(2000),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+  idempotency_key VARCHAR(255),
+  started_at TIMESTAMP,
+  completed_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_jobs_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
+  CONSTRAINT fk_jobs_project FOREIGN KEY (project_id) REFERENCES user_projects(id),
+  CONSTRAINT fk_jobs_actor FOREIGN KEY (actor_user_id) REFERENCES sys_users(id),
+  CONSTRAINT fk_jobs_reservation_wallet FOREIGN KEY (reservation_wallet_id) REFERENCES user_wallets(id),
+  CONSTRAINT uq_async_jobs_project_idempotency UNIQUE (project_id, idempotency_key)
 );
 
 -- User table: project-specific routing policy overrides for model gateway behavior.
@@ -619,9 +661,31 @@ CREATE TABLE IF NOT EXISTS user_webhook_endpoints (
   project_id VARCHAR(64) NOT NULL,
   url VARCHAR(1024) NOT NULL,
   secret_ref VARCHAR(255),
+  events VARCHAR(2000) NOT NULL DEFAULT '*',
   status VARCHAR(64) NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_webhooks_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
+);
+
+-- User table: durable, replayable outgoing webhook delivery attempts.
+CREATE TABLE IF NOT EXISTS user_webhook_deliveries (
+  id VARCHAR(64) PRIMARY KEY,
+  endpoint_id VARCHAR(64) NOT NULL,
+  project_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(255) NOT NULL,
+  payload VARCHAR(4000) NOT NULL,
+  status VARCHAR(64) NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 6,
+  next_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  response_status INTEGER,
+  response_body VARCHAR(2000),
+  error_message VARCHAR(2000),
+  delivered_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_webhook_deliveries_endpoint FOREIGN KEY (endpoint_id) REFERENCES user_webhook_endpoints(id),
+  CONSTRAINT fk_webhook_deliveries_project FOREIGN KEY (project_id) REFERENCES user_projects(id)
 );
 
 -- System table: platform audit trail for administrative and organization-level actions.

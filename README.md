@@ -481,3 +481,82 @@ imports appear as explicit messages rather than broken external previews. These
 changes affect new requests; they do not repair previously saved broken links or
 upload seeded placeholder artifacts. Real non-Gemini media generation is not yet
 implemented; mock artifacts are restricted to mock routes.
+
+### Async job control plane
+
+File-extraction work can be registered through `POST /api/v1/async-jobs` with
+`metadata.asset_id` pointing at a text, CSV, JSON, or XML asset. Jobs can be listed or inspected with
+`GET /api/v1/async-jobs?project_id=...` and `GET /api/v1/async-jobs/{id}`.
+Queued/running jobs support cancellation, and failed jobs below their attempt
+limit support retry through the `/cancel` and `/retry` actions. Creation accepts
+a project-scoped idempotency key so client retries do not enqueue duplicates.
+
+Existing databases must apply
+`db/migrations/20261101_async_job_control_plane.sql`. Docker Compose starts a
+separate durable worker that claims jobs with PostgreSQL `SKIP LOCKED`, recovers
+expired worker leases, retries transient failures, honors cancellation before
+persisting results, and stores extracted text in `user_file_extractions`.
+Workbench image, video, and audio requests are submitted to the worker. The
+worker currently executes mock media routes and the existing Gemini image route
+in the background. It atomically persists credit reservation state with the
+job, then captures billing together with inference, provider-attempt, usage,
+asset, conversation, and completed-job records. Failure and cancellation
+release the reservation. Provider-native submit/poll adapters remain open for
+services whose generation API does not return the finished artifact directly.
+
+The Workbench automatically queues extraction after a supported file upload and
+polls active jobs every two seconds. Extractable files are limited to 10 MB. A
+completed result is available from `GET /api/v1/assets/{id}/extraction` and is
+automatically included in later requests for the same conversation. Context
+packing uses the newest extraction per asset, at most ten assets, and a combined
+40,000-rune ceiling.
+
+### Outgoing webhooks
+
+Projects can manage signed webhook targets with `/api/v1/webhooks` and inspect
+or replay durable attempts through `/api/v1/webhook-deliveries`. Endpoint
+secrets are read from environment-variable references and are never returned by
+the API. Supported events are `async_job.completed`, `async_job.failed`, and
+`async_job.cancelled`.
+
+Each request includes delivery/event identifiers and an
+`X-Model-Market-Signature` value in the form `t=<unix>,v1=<hmac-sha256>`, signed
+over `<unix>.<raw-json-payload>`. The worker records bounded response bodies,
+retries failures with exponential backoff, recovers expired delivery leases,
+and supports replay of terminal attempts. Production endpoints require HTTPS
+and literal private/loopback addresses are rejected; development mode also
+permits HTTP endpoints for local testing. Existing databases must apply
+`db/migrations/20261101_webhook_delivery.sql`.
+
+### Provider-native async polling
+
+Channels with `channel_type = 'async_http'` use a durable submit/poll state
+machine. Configure the channel `settings` JSON with paths and response fields:
+
+```json
+{
+  "async_submit_path": "v1/jobs",
+  "async_status_path": "v1/jobs/{job_id}",
+  "async_id_field": "id",
+  "async_status_field": "status",
+  "async_output_field": "result.url",
+  "async_prompt_tokens_field": "usage.prompt_tokens",
+  "async_output_tokens_field": "usage.completion_tokens",
+  "async_succeeded_values": ["completed", "succeeded"],
+  "async_failed_values": ["failed", "cancelled"],
+  "async_poll_interval_seconds": 3,
+  "async_max_poll_seconds": 900
+}
+```
+
+Submit requests use a job-scoped idempotency key. Provider job IDs, status, and
+next-poll timestamps are persisted, so restarts continue polling instead of
+resubmitting. Credit reservations remain held across polls and are captured on
+success or released on failure, timeout, or cancellation.
+
+File extraction also creates overlapping chunks and deterministic local
+embeddings (`local-hash-v1`). Chat context ranks the newest chunks for each
+conversation asset against the latest user message, packs at most ten assets
+under the 40,000-rune ceiling, and falls back to legacy full extractions when
+older data has not yet been chunked. Existing databases must apply
+`db/migrations/20261101_file_retrieval.sql`.

@@ -5,12 +5,14 @@ COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
 COPY backend/ ./
 RUN go build -o /bin/model-market-server ./cmd/server
+RUN go build -o /bin/model-market-worker ./cmd/worker
 
 FROM alpine:3.20
 
 RUN adduser -D -u 10001 appuser
 WORKDIR /app
 COPY --from=build /bin/model-market-server /bin/model-market-server
+COPY --from=build /bin/model-market-worker /bin/model-market-worker
 USER appuser
 
 ENV HTTP_ADDR=:8080

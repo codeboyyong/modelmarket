@@ -132,6 +132,27 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 		var found int
 		return a.DB.QueryRowContext(r.Context(), `select 1 from user_workbench_assets a join user_projects p on p.id = a.project_id join sys_memberships m on m.organization_id = p.organization_id where a.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
 	}
+	if strings.HasPrefix(path, "/api/v1/async-jobs/") {
+		id := strings.TrimPrefix(path, "/api/v1/async-jobs/")
+		if slash := strings.Index(id, "/"); slash >= 0 {
+			id = id[:slash]
+		}
+		var found int
+		return a.DB.QueryRowContext(r.Context(), `select 1 from user_async_jobs j join user_projects p on p.id = j.project_id join sys_memberships m on m.organization_id = p.organization_id where j.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
+	}
+	if strings.HasPrefix(path, "/api/v1/webhooks/") {
+		id := strings.TrimPrefix(path, "/api/v1/webhooks/")
+		var found int
+		return a.DB.QueryRowContext(r.Context(), `select 1 from user_webhook_endpoints e join user_projects p on p.id = e.project_id join sys_memberships m on m.organization_id = p.organization_id where e.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
+	}
+	if strings.HasPrefix(path, "/api/v1/webhook-deliveries/") {
+		id := strings.TrimPrefix(path, "/api/v1/webhook-deliveries/")
+		if slash := strings.Index(id, "/"); slash >= 0 {
+			id = id[:slash]
+		}
+		var found int
+		return a.DB.QueryRowContext(r.Context(), `select 1 from user_webhook_deliveries d join user_projects p on p.id = d.project_id join sys_memberships m on m.organization_id = p.organization_id where d.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
+	}
 	if strings.HasPrefix(path, "/api/v1/api-keys/") {
 		id := strings.TrimPrefix(path, "/api/v1/api-keys/")
 		var found int

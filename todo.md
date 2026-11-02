@@ -8,7 +8,7 @@ larger production and enterprise extensions can still be tracked separately.
 - [ ] 1. Production authentication and authorization: persistent sessions or
   signed tokens, request authentication, project isolation, RBAC, and a
   password KDF such as Argon2id or bcrypt.
-- [ ] 2. Real OAuth login: Google and Facebook authorization callbacks,
+- [x] 2. Real OAuth login: Google and Facebook authorization callbacks,
   identity verification, and account linking.
 - [ ] 3. Tenant and project data isolation across projects, conversations,
   assets, usage, company views, and admin APIs.
@@ -23,7 +23,7 @@ larger production and enterprise extensions can still be tracked separately.
   error envelopes.
 - [ ] 8. Additional real provider adapters for OpenAI, Anthropic, xAI,
   Replicate, and configurable OpenAI-compatible endpoints.
-- [ ] 9. Async generation jobs with a queue, worker, progress, retry,
+- [x] 9. Async generation jobs with a queue, worker, progress, retry,
   cancellation, credit reservations, and status APIs.
 - [ ] 10. Real object storage and secure uploads with presigned URLs,
   ownership checks, size limits, malware scanning, retention, and private
@@ -46,7 +46,7 @@ larger production and enterprise extensions can still be tracked separately.
 - [ ] 18. Payment lifecycle: successful, failed, and expired checkouts;
   refunds, disputes, receipts/invoices, saved methods, automatic top-up, and
   promotional-credit expiration.
-- [ ] 19. Outgoing webhook delivery with signing, retries, delivery logs,
+- [x] 19. Outgoing webhook delivery with signing, retries, delivery logs,
   replay, and management APIs.
 - [ ] 20. Observability and operations: metrics, traces, provider dashboards,
   queue visibility, anomaly alerts, status pages, incidents, and SLA reports.
@@ -104,7 +104,8 @@ The requested MVP work delivered in the current implementation includes:
 - Item 2: Google OpenID Connect authorization-code login is implemented with
   state, nonce, PKCE, cached JWKS signature verification, verified-email
   account linking/provisioning, and a short-lived one-use frontend exchange
-  code. Facebook OAuth remains open.
+  code. Facebook and GitHub authorization-code login, identity validation, and
+  safe account linking are also implemented.
 - Item 3: production browser routes now require a session and enforce user,
   organization, project, conversation, asset, and API-key membership checks at
   the HTTP boundary. Additional policy tests and company/admin query review
@@ -130,8 +131,8 @@ The requested MVP work delivered in the current implementation includes:
 - [x] Remove public API/API-key navigation and user-facing placeholder copy.
 - [x] Make management forms and wide data tables usable on mobile screens.
 - [x] Pass backend tests, frontend typecheck/build, Go vet, and diff checks.
-- [ ] Run the database-backed demo smoke test. Blocked until PostgreSQL and the
-  backend debug service are running.
+- [x] Run the database-backed demo smoke test in CI against PostgreSQL and the
+  filesystem-backed mock object store.
 - [ ] Visually verify the deployed debug UI. Blocked while
   `http://100.98.0.64:3000` is unreachable.
 
@@ -153,3 +154,45 @@ The requested MVP work delivered in the current implementation includes:
 - [x] Add backend coverage for organization invitations and roles, invitation
   acceptance, refunds, metrics, throttling, upload rejection, presets,
   conversation rename, and asset deletion.
+
+## October-November 2026 progress
+
+- Item 10: real AWS S3 and S3-compatible MinIO storage are implemented through
+  the AWS SDK, including presigned PUT/GET URLs, private asset downloads,
+  ownership checks, safe MIME and size limits, deletion, and retention cleanup.
+  Malware scanning and storage backup/versioning operations remain open.
+- Item 18: Stripe refunds are submitted to the provider with idempotency keys
+  before local wallet and immutable-ledger settlement. Invoices/tax, saved
+  payment methods, automatic top-up, disputes, and promotional expiry remain
+  open.
+- Billing now supports fractional credit prices and charges while preserving
+  atomic reservation, capture, release, and refund behavior.
+- Local validation covers the stream response's missing-usage edge case without
+  panicking and emits safe zero-valued charge fields when billing metadata is
+  unavailable.
+- Item 9: the async-job control plane now supports project-scoped idempotent
+  creation, listing, status inspection, cancellation, retry eligibility,
+  progress/error/result fields, attempt limits, tenant authorization, and an
+  additive migration. A separately runnable durable worker claims jobs with
+  `SKIP LOCKED`, recovers expired leases, retries transient errors, honors
+  cancellation, and executes UTF-8 text/CSV/JSON/XML extraction into
+  `user_file_extractions`. Mock image/video/audio routes and the existing Gemini
+  image route now execute through the worker with atomic credit reservation,
+  capture/release, inference, provider-attempt, usage, asset, conversation, and
+  job settlement. Configurable `async_http` channels persist provider job IDs,
+  status, next-poll times, idempotent submission, field mappings, poll limits,
+  and reservations across worker restarts. Terminal events feed the durable
+  signed-webhook delivery system.
+- Item 11: safe UTF-8 text, Markdown, CSV, TSV, JSON, and XML uploads can now be
+  extracted asynchronously. The Workbench automatically queues and polls these
+  jobs, exposes extraction status, and injects the newest completed conversation
+  attachments into subsequent model requests. Extractions now produce bounded
+  overlapping chunks, deterministic local embeddings, embedding index records,
+  relevance-ranked retrieval, legacy-data fallback, ten-asset selection, and a
+  40,000-rune packing limit. PDF parsing, provider embeddings/pgvector,
+  summaries, and pinned-message controls remain open.
+- Item 19: project webhook endpoint management, event subscriptions, durable
+  delivery records, HMAC-SHA256 signing, bounded response capture, exponential
+  retry, expired-lease recovery, terminal delivery logs, replay, endpoint
+  disable/cancellation, tenant authorization, and async-job terminal events are
+  implemented.

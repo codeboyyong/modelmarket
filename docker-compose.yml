@@ -78,6 +78,8 @@ services:
       S3_PRESIGN_MINUTES: "${S3_PRESIGN_MINUTES:-15}"
     ports:
       - "8080:8080"
+    volumes:
+      - asset-storage:/tmp/model-market-storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,6 +88,38 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["/bin/model-market-worker"]
+    environment:
+      MM_APP_ENV: "dev"
+      MM_DB_DRIVER: "postgres"
+      MM_DB_HOST: "postgres"
+      MM_DB_PORT: "5432"
+      MM_DB_NAME: "model_market"
+      MM_DB_USER: "model_market"
+      MM_DB_PASSWORD: "model_market"
+      MM_DB_SSL_MODE: "disable"
+      DEV_MODE: "true"
+      OBJECT_STORAGE_DIR: "/tmp/model-market-storage"
+      OBJECT_STORAGE_PROVIDER: "${OBJECT_STORAGE_PROVIDER:-local}"
+      MM_ASSET_BUCKET: "${MM_ASSET_BUCKET:-model-market-dev-assets}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      S3_ENDPOINT_URL: "${S3_ENDPOINT_URL:-}"
+      S3_FORCE_PATH_STYLE: "${S3_FORCE_PATH_STYLE:-false}"
+      S3_PRESIGN_MINUTES: "${S3_PRESIGN_MINUTES:-15}"
+      LOG_LEVEL: "info"
+    volumes:
+      - asset-storage:/tmp/model-market-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:
@@ -101,3 +135,4 @@ services:
 
 volumes:
   postgres-data:
+  asset-storage:

@@ -127,7 +127,7 @@ func deleteConversation(ctx context.Context, db *sql.DB, id, storageRoot string)
 		return err
 	}
 	defer tx.Rollback()
-	for _, query := range []string{`delete from user_message_attachments where message_id in (select id from user_messages where conversation_id=$1) or asset_id in (select id from user_workbench_assets where conversation_id=$1)`, `delete from user_file_extractions where asset_id in (select id from user_workbench_assets where conversation_id=$1)`, `delete from user_workbench_assets where conversation_id=$1`, `delete from user_messages where conversation_id=$1`, `delete from user_conversation_branches where conversation_id=$1`, `delete from user_conversations where id=$1`} {
+	for _, query := range []string{`delete from user_message_attachments where message_id in (select id from user_messages where conversation_id=$1) or asset_id in (select id from user_workbench_assets where conversation_id=$1)`, `delete from user_embedding_records where source_type='file_chunk' and source_id in (select c.id from user_file_chunks c join user_workbench_assets a on a.id=c.asset_id where a.conversation_id=$1)`, `delete from user_file_chunks where asset_id in (select id from user_workbench_assets where conversation_id=$1)`, `delete from user_file_extractions where asset_id in (select id from user_workbench_assets where conversation_id=$1)`, `delete from user_workbench_assets where conversation_id=$1`, `delete from user_messages where conversation_id=$1`, `delete from user_conversation_branches where conversation_id=$1`, `delete from user_conversations where id=$1`} {
 		if _, err := tx.ExecContext(ctx, query, id); err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func deleteAsset(ctx context.Context, db *sql.DB, id, storageRoot string) error 
 		return err
 	}
 	defer tx.Rollback()
-	for _, query := range []string{`delete from user_message_attachments where asset_id=$1`, `delete from user_file_extractions where asset_id=$1`, `delete from user_workbench_assets where id=$1`} {
+	for _, query := range []string{`delete from user_message_attachments where asset_id=$1`, `delete from user_embedding_records where source_type='file_chunk' and source_id in (select id from user_file_chunks where asset_id=$1)`, `delete from user_file_chunks where asset_id=$1`, `delete from user_file_extractions where asset_id=$1`, `delete from user_workbench_assets where id=$1`} {
 		if _, err := tx.ExecContext(ctx, query, id); err != nil {
 			return err
 		}

@@ -55,6 +55,16 @@ type UploadIntentResponse = {
   };
 };
 
+type AsyncJob = {
+  id: string;
+  project_id: string;
+  job_type: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | string;
+  progress: number;
+  error_message: string;
+  metadata: { asset_id?: string; prompt?: string; conversation_id?: string };
+};
+
 type ConversationMessage = {
   id: string;
   role: "user" | "assistant" | string;
@@ -263,6 +273,8 @@ let projectLoadError = "";
 let conversations: Conversation[] = [];
 let branches: ConversationBranch[] = [];
 let assets: WorkspaceAsset[] = [];
+let asyncJobs: AsyncJob[] = [];
+let asyncJobRefreshTimer: number | undefined;
 let pricingRows: PricingRow[] = [];
 let signupMode = false;
 let changePasswordMode = false;
@@ -707,6 +719,7 @@ async function loadWorkspace() {
     conversations = [];
     branches = [];
     assets = [];
+	asyncJobs = [];
     currentBranchID = "";
 	promptPresets = [];
     renderWorkspaceLists();
@@ -715,14 +728,16 @@ async function loadWorkspace() {
     return;
   }
   try {
-    const [conversationData, assetData, presetData] = await Promise.all([
+    const [conversationData, assetData, presetData, jobData] = await Promise.all([
       request<{ conversations: Conversation[] }>(`/api/v1/conversations?project_id=${encodeURIComponent(currentProjectID)}`),
 	  request<{ assets: WorkspaceAsset[] }>(`/api/v1/assets?project_id=${encodeURIComponent(currentProjectID)}`),
-	  request<{ presets: PromptPreset[] }>(`/api/v1/prompt-presets?project_id=${encodeURIComponent(currentProjectID)}`)
+	  request<{ presets: PromptPreset[] }>(`/api/v1/prompt-presets?project_id=${encodeURIComponent(currentProjectID)}`),
+	  request<{ jobs: AsyncJob[] }>(`/api/v1/async-jobs?project_id=${encodeURIComponent(currentProjectID)}`)
     ]);
     conversations = conversationData.conversations;
     assets = assetData.assets;
 	promptPresets = presetData.presets || [];
+	asyncJobs = jobData.jobs || [];
     if (!conversations.some((conversation) => conversation.id === currentConversationID)) {
       currentConversationID = conversations[0]?.id || "";
       currentBranchID = "";
@@ -731,14 +746,37 @@ async function loadWorkspace() {
     conversations = [];
     branches = [];
     assets = [];
+	asyncJobs = [];
 	promptPresets = [];
     currentConversationID = "";
     currentBranchID = "";
   }
   renderWorkspaceLists();
 	renderPromptPresets();
+  scheduleAsyncJobRefresh();
   await loadConversationBranches();
   await loadConversationMessages();
+}
+
+function scheduleAsyncJobRefresh() {
+  if (asyncJobRefreshTimer !== undefined) window.clearTimeout(asyncJobRefreshTimer);
+  asyncJobRefreshTimer = undefined;
+  if (!currentProjectID || !asyncJobs.some((job) => job.status === "queued" || job.status === "running")) return;
+  asyncJobRefreshTimer = window.setTimeout(async () => {
+    try {
+      const previouslyActive = new Set(asyncJobs.filter((job) => job.status === "queued" || job.status === "running").map((job) => job.id));
+      const data = await request<{ jobs: AsyncJob[] }>(`/api/v1/async-jobs?project_id=${encodeURIComponent(currentProjectID)}`);
+      asyncJobs = data.jobs || [];
+      if (asyncJobs.some((job) => previouslyActive.has(job.id) && job.status !== "queued" && job.status !== "running")) {
+        await loadWorkspace();
+        return;
+      }
+      renderWorkspaceLists();
+      scheduleAsyncJobRefresh();
+    } catch {
+      asyncJobRefreshTimer = undefined;
+    }
+  }, 2000);
 }
 
 function renderPromptPresets() {
@@ -799,20 +837,33 @@ function renderWorkspaceLists() {
     const matchesBranch = !asset.branch_id || !currentBranchID || asset.branch_id === currentBranchID;
     return matchesConversation && matchesBranch;
   });
-  $("artifacts").innerHTML =
-    visibleAssets
+  const assetRows = visibleAssets
       .map((asset) => {
         const href = assetHref(asset);
         const preview = renderAssetMedia(asset, true);
+        const extractionJob = asyncJobs.find((job) => job.job_type === "file_extraction" && job.metadata?.asset_id === asset.id);
+        const extractionStatus = extractionJob
+          ? ` · extraction ${escapeHTML(extractionJob.status)}${extractionJob.status === "running" ? ` ${Math.max(0, Math.min(100, extractionJob.progress))}%` : ""}${extractionJob.error_message ? `: ${escapeHTML(extractionJob.error_message)}` : ""}`
+          : "";
         return `<div class="workspace-row artifact-row">
         <span class="artifact-transfer-icon ${artifactTransferClass(asset)}" title="${artifactTransferLabel(asset)}" aria-label="${artifactTransferLabel(asset)}">${artifactTransferIcon(asset)}</span>
-        <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes</small></span>
+        <span><strong>${escapeHTML(asset.asset_type)}</strong><small>${escapeHTML(asset.mime_type || "artifact")} / ${asset.size_bytes.toLocaleString()} bytes${extractionStatus}</small></span>
         ${preview}
         <a class="artifact-link" href="${escapeHTML(href)}" target="_blank" rel="noreferrer">${escapeHTML(href || asset.storage_path)}</a>
 		<button class="ghost mini-button" type="button" data-delete-asset="${escapeHTML(asset.id)}">Delete asset</button>
       </div>`;
       })
-      .join("") || "<div class=\"empty-state\">No generated artifacts yet.</div>";
+      .join("");
+  const generationJobRows = asyncJobs
+    .filter((job) => job.job_type.endsWith("_generation") && (!job.metadata?.conversation_id || job.metadata.conversation_id === currentConversationID))
+    .slice(0, 10)
+    .map((job) => `<div class="workspace-row artifact-row">
+      <span class="artifact-transfer-icon" aria-hidden="true">⏳</span>
+      <span><strong>${escapeHTML(formatUserType(job.job_type))}</strong><small>${escapeHTML(job.status)} · ${Math.max(0, Math.min(100, job.progress))}%${job.error_message ? ` · ${escapeHTML(job.error_message)}` : ""}</small></span>
+      <span>${escapeHTML(job.metadata?.prompt || "Generation job")}</span>
+    </div>`)
+    .join("");
+  $("artifacts").innerHTML = generationJobRows + assetRows || "<div class=\"empty-state\">No generated artifacts yet.</div>";
   renderSelectedConversation();
 }
 
@@ -1392,9 +1443,10 @@ async function createKey() {
 
 async function sendPrompt() {
   if (promptSending) return;
-  if (!currentAPIKey) await createKey();
   if (!currentConversationID) throw new Error("Select or create a conversation first.");
-  const model = selectedWorkbenchModel || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
+  const model = selectedWorkbenchModelKey() || ($("modelSelect") as HTMLSelectElement).value || "mock-chat";
+  const modality = selectedWorkbenchModelRecord()?.modality || workbenchModality || "chat";
+  if (modality === "chat" && !currentAPIKey) await createKey();
   const parameters = currentOutputParameters();
   const promptInput = $("prompt") as HTMLTextAreaElement;
   const prompt = promptInput.value.trim();
@@ -1404,6 +1456,21 @@ async function sendPrompt() {
   const waitingID = appendWaitingMessage();
   setPromptSending(true);
   try {
+    if (modality !== "chat") {
+      const data = await request<{ job: AsyncJob }>("/api/v1/async-jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          project_id: currentProjectID,
+          job_type: `${modality}_generation`,
+          model,
+          idempotency_key: `workbench:${currentConversationID}:${Date.now()}`,
+          metadata: { prompt, parameters, conversation_id: currentConversationID, branch_id: currentBranchID }
+        })
+      });
+      replaceWaitingMessage(waitingID, `${formatUserType(modality)} generation queued (${data.job.id}). You can continue working while it runs.`);
+      await loadWorkspace();
+      return;
+    }
     const data = await request<ChatResponse>("/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${currentAPIKey}` },
@@ -1428,6 +1495,8 @@ async function sendPrompt() {
 async function uploadAssetFile(file: File) {
 	if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw new Error("Files must be between 1 byte and 25 MB.");
   if (!currentProjectID) throw new Error("Select or create a project first.");
+  const contentType = file.type || uploadContentTypeForFilename(file.name);
+  if (isExtractableUploadType(contentType) && file.size > 10 * 1024 * 1024) throw new Error("Text, CSV, JSON, and XML files must be 10 MB or smaller.");
   const data = await request<UploadIntentResponse>("/api/v1/assets/upload-intent", {
     method: "POST",
     body: JSON.stringify({
@@ -1435,21 +1504,42 @@ async function uploadAssetFile(file: File) {
       conversation_id: currentConversationID,
       branch_id: currentBranchID,
       filename: file.name,
-      content_type: file.type,
+      content_type: contentType,
       size_bytes: file.size
     })
   });
   const uploadURL = data.upload.url.startsWith("/") ? `${apiBase}${data.upload.url}` : data.upload.url;
   const uploadResponse = await fetch(uploadURL, {
     method: data.upload.method || "PUT",
-    headers: { "Content-Type": file.type || "application/octet-stream" },
+    headers: { "Content-Type": contentType },
     body: file
   });
   if (!uploadResponse.ok) {
     throw new Error(`${uploadResponse.status} ${await uploadResponse.text()}`);
   }
-  appendMessage("user", `Uploaded ${file.name}`);
+  if (isExtractableUploadType(contentType)) {
+    await request("/api/v1/async-jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: currentProjectID,
+        job_type: "file_extraction",
+        idempotency_key: `file-extraction:${data.asset.id}`,
+        metadata: { asset_id: data.asset.id }
+      })
+    });
+  }
+  appendMessage("user", `Uploaded ${file.name}${isExtractableUploadType(contentType) ? " · extracting text in background" : ""}`);
   await loadWorkspace();
+}
+
+function uploadContentTypeForFilename(filename: string): string {
+  const extension = filename.toLowerCase().split(".").pop() || "";
+  return ({ txt: "text/plain", md: "text/markdown", csv: "text/csv", tsv: "text/tab-separated-values", json: "application/json", xml: "application/xml" } as Record<string, string>)[extension] || "application/octet-stream";
+}
+
+function isExtractableUploadType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase().split(";", 1)[0].trim();
+  return normalized.startsWith("text/") || normalized === "application/json" || normalized === "application/xml";
 }
 
 function appendMessage(role: "user" | "assistant", content: string) {

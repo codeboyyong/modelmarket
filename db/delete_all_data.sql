@@ -1,6 +1,7 @@
 
 DELETE FROM sys_provider_settlements;
 DELETE FROM sys_audit_logs;
+DELETE FROM user_webhook_deliveries;
 DELETE FROM user_webhook_endpoints;
 DELETE FROM user_budget_policies;
 DELETE FROM user_routing_policies;
@@ -8,6 +9,7 @@ DELETE FROM user_async_jobs;
 DELETE FROM user_usage_events;
 DELETE FROM user_provider_attempts;
 DELETE FROM user_embedding_records;
+DELETE FROM user_file_chunks;
 DELETE FROM user_file_extractions;
 DELETE FROM user_message_attachments;
 DELETE FROM user_workbench_assets;

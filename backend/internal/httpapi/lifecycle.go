@@ -62,6 +62,8 @@ func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	statements := []string{
 		`delete from user_message_attachments where message_id in (select id from user_messages where conversation_id = $1) or asset_id in (select id from user_workbench_assets where conversation_id = $1)`,
+		`delete from user_embedding_records where source_type = 'file_chunk' and source_id in (select c.id from user_file_chunks c join user_workbench_assets a on a.id = c.asset_id where a.conversation_id = $1)`,
+		`delete from user_file_chunks where asset_id in (select id from user_workbench_assets where conversation_id = $1)`,
 		`delete from user_file_extractions where asset_id in (select id from user_workbench_assets where conversation_id = $1)`,
 		`delete from user_workbench_assets where conversation_id = $1`,
 		`delete from user_messages where conversation_id = $1`,
@@ -174,7 +176,13 @@ func (a *App) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	for _, statement := range []string{`delete from user_message_attachments where asset_id = $1`, `delete from user_file_extractions where asset_id = $1`, `delete from user_workbench_assets where id = $1`} {
+	for _, statement := range []string{
+		`delete from user_message_attachments where asset_id = $1`,
+		`delete from user_embedding_records where source_type = 'file_chunk' and source_id in (select id from user_file_chunks where asset_id = $1)`,
+		`delete from user_file_chunks where asset_id = $1`,
+		`delete from user_file_extractions where asset_id = $1`,
+		`delete from user_workbench_assets where id = $1`,
+	} {
 		if _, err := tx.ExecContext(r.Context(), statement, id); err != nil {
 			writeJSON(w, 500, response{"error": err.Error()})
 			return

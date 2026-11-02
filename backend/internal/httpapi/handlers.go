@@ -69,6 +69,7 @@ func (a *App) devSummary(w http.ResponseWriter, r *http.Request) {
 		"wallets":        "user_wallets",
 		"conversations":  "user_conversations",
 		"messages":       "user_messages",
+		"async_jobs":     "user_async_jobs",
 		"usage_events":   "user_usage_events",
 	}
 	for key, table := range summaryTables {
@@ -1877,6 +1878,10 @@ func (a *App) createUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": "unsupported_upload_type"})
 		return
 	}
+	if assetType == "upload_document" && req.SizeBytes > maxExtractedFileBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, response{"error": "extractable_file_too_large", "max_size_bytes": maxExtractedFileBytes})
+		return
+	}
 	assetID := "asset_" + randomHex(12)
 	filename := sanitizeFilename(req.Filename)
 	if filename == "" {
@@ -2184,6 +2189,14 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{"error": err.Error()})
 		return
 	}
+	contextAssetCount := 0
+	if req.ConversationID != "" {
+		req.Messages, contextAssetCount, err = a.withExtractedFileContext(r.Context(), projectID, req.ConversationID, req.Messages)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": "file_context_load_failed"})
+			return
+		}
+	}
 	route, err := a.selectModelRoute(r.Context(), req.Model, "default")
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, response{"error": "no_route_for_model", "model": req.Model})
@@ -2254,6 +2267,9 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	content := upstream.Content
 	metadata := response{"requested_model": req.Model, "upstream_model_id": route.UpstreamModelID, "route_group": route.RouteGroup}
+	if contextAssetCount > 0 {
+		metadata["context_asset_count"] = contextAssetCount
+	}
 	if len(req.Parameters) > 0 {
 		metadata["parameters"] = req.Parameters
 	}
@@ -2376,10 +2392,25 @@ func writeChatCompletionStream(w http.ResponseWriter, completion response, model
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	created := time.Now().Unix()
+	finalUsage := response{
+		"prompt_tokens":     usage.PromptTokens,
+		"completion_tokens": usage.CompletionTokens,
+		"total_tokens":      usage.PromptTokens + usage.CompletionTokens,
+		"customer_charge":   float64(0),
+		"provider_cost":     float64(0),
+	}
+	if completionUsage, ok := completion["usage"].(response); ok {
+		if value, exists := completionUsage["customer_charge"]; exists {
+			finalUsage["customer_charge"] = value
+		}
+		if value, exists := completionUsage["provider_cost"]; exists {
+			finalUsage["provider_cost"] = value
+		}
+	}
 	chunks := []response{
 		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"role": "assistant"}, "finish_reason": nil}}},
 		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{"content": content}, "finish_reason": nil}}},
-		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{}, "finish_reason": "stop"}}, "usage": response{"prompt_tokens": usage.PromptTokens, "completion_tokens": usage.CompletionTokens, "total_tokens": usage.PromptTokens + usage.CompletionTokens, "customer_charge": completion["usage"].(response)["customer_charge"], "provider_cost": completion["usage"].(response)["provider_cost"]}},
+		{"id": requestID, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []response{{"index": 0, "delta": response{}, "finish_reason": "stop"}}, "usage": finalUsage},
 	}
 	for _, chunk := range chunks {
 		raw, _ := json.Marshal(chunk)
@@ -3425,6 +3456,8 @@ func assetTypeForContentType(contentType string) string {
 		return "upload_audio"
 	case "video/mp4", "video/webm", "video/quicktime":
 		return "upload_video"
+	case "text/plain", "text/markdown", "text/csv", "text/tab-separated-values", "application/json", "application/xml", "text/xml":
+		return "upload_document"
 	default:
 		return ""
 	}
