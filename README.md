@@ -560,3 +560,18 @@ conversation asset against the latest user message, packs at most ten assets
 under the 40,000-rune ceiling, and falls back to legacy full extractions when
 older data has not yet been chunked. Existing databases must apply
 `db/migrations/20261101_file_retrieval.sql`.
+
+### Conversation context
+
+Workbench chat requests may send only the newest user prompt. The backend
+reconstructs model context from the branch's compact summary, explicitly pinned
+messages, and the newest unpinned messages, then appends the current request.
+Pinned messages take budget priority, recent messages are selected newest-first,
+and leading system/file context remains ahead of conversational turns.
+
+Use `PATCH /api/v1/messages/{id}` with `{"pinned":true}` to retain an important
+message. `POST /api/v1/conversation-summaries/refresh` refreshes the compact
+older portion of a branch while leaving the newest 40 messages verbatim; fetch
+it with `GET /api/v1/conversation-summaries?conversation_id=...&branch_id=...`.
+Workbench refreshes the summary after successful chat turns. Existing databases
+must apply `db/migrations/20261106_conversation_context.sql`.

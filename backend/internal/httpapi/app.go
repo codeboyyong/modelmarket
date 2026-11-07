@@ -82,6 +82,9 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/prompt-presets", a.createPromptPreset)
 	mux.HandleFunc("DELETE /api/v1/prompt-presets/{id}", a.deletePromptPreset)
 	mux.HandleFunc("GET /api/v1/messages", a.messages)
+	mux.HandleFunc("PATCH /api/v1/messages/{id}", a.updateMessagePinned)
+	mux.HandleFunc("GET /api/v1/conversation-summaries", a.conversationSummary)
+	mux.HandleFunc("POST /api/v1/conversation-summaries/refresh", a.refreshConversationSummary)
 	mux.HandleFunc("GET /api/v1/assets", a.assets)
 	mux.HandleFunc("POST /api/v1/assets/upload-intent", a.createUploadIntent)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
@@ -124,7 +127,7 @@ func cors(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-Environment, X-Forwarded-For")
 		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Retry-After")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

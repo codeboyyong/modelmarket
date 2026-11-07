@@ -41,3 +41,42 @@ func TestProductionSessionScopesProjectListing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProductionSessionAuthorizesConversationQuery(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	app.Config.DevMode = false
+	token := "sess_conversation"
+	mock.ExpectQuery("select u.id, u.email, u.user_type").WithArgs(sessionTokenHash(token)).WillReturnRows(sqlmock.NewRows([]string{"id", "email", "user_type"}).AddRow("user-1", "one@example.com", "individual_consumer"))
+	mock.ExpectQuery("select 1 from user_conversations c").WithArgs("conversation-1", "user-1").WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+	mock.ExpectQuery("select id, role, content").WithArgs("conversation-1").WillReturnRows(sqlmock.NewRows([]string{"id", "role", "content", "model_profile_id", "branch_id", "inference_request_id", "customer_charge", "provider_cost", "metadata", "pinned", "created_at"}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages?conversation_id=conversation-1", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	app.Routes().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProductionSessionRejectsUnauthorizedMessageUpdate(t *testing.T) {
+	app, mock, cleanup := testApp(t)
+	defer cleanup()
+	app.Config.DevMode = false
+	token := "sess_message"
+	mock.ExpectQuery("select u.id, u.email, u.user_type").WithArgs(sessionTokenHash(token)).WillReturnRows(sqlmock.NewRows([]string{"id", "email", "user_type"}).AddRow("user-1", "one@example.com", "individual_consumer"))
+	mock.ExpectQuery("select 1 from user_messages msg").WithArgs("message-other", "user-1").WillReturnRows(sqlmock.NewRows([]string{"found"}))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/messages/message-other", strings.NewReader(`{"pinned":true}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	app.Routes().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

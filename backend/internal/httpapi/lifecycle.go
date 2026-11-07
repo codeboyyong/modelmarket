@@ -66,6 +66,7 @@ func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		`delete from user_file_chunks where asset_id in (select id from user_workbench_assets where conversation_id = $1)`,
 		`delete from user_file_extractions where asset_id in (select id from user_workbench_assets where conversation_id = $1)`,
 		`delete from user_workbench_assets where conversation_id = $1`,
+		`delete from user_conversation_summaries where conversation_id = $1`,
 		`delete from user_messages where conversation_id = $1`,
 		`delete from user_conversation_branches where conversation_id = $1`,
 		`delete from user_conversations where id = $1`,

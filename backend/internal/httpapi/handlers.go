@@ -1727,7 +1727,7 @@ func (a *App) createConversationBranch(w http.ResponseWriter, r *http.Request) {
 		args = append(args, sourceBranchID.String)
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
-		select role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, created_at
+		select role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, pinned, created_at
 		from user_messages
 		where conversation_id = $1
 			and `+whereBranch+`
@@ -1749,12 +1749,13 @@ func (a *App) createConversationBranch(w http.ResponseWriter, r *http.Request) {
 		inferenceRequestID      sql.NullString
 		customerCharge          float64
 		providerCost            float64
+		pinned                  bool
 		createdAt               time.Time
 	}
 	copies := []copiedMessage{}
 	for rows.Next() {
 		var msg copiedMessage
-		if err := rows.Scan(&msg.role, &msg.content, &msg.modelProfileID, &msg.inferenceRequestID, &msg.customerCharge, &msg.providerCost, &msg.metadata, &msg.createdAt); err != nil {
+		if err := rows.Scan(&msg.role, &msg.content, &msg.modelProfileID, &msg.inferenceRequestID, &msg.customerCharge, &msg.providerCost, &msg.metadata, &msg.pinned, &msg.createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
@@ -1762,9 +1763,9 @@ func (a *App) createConversationBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, msg := range copies {
 		_, err = a.DB.ExecContext(r.Context(), `
-			insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, created_at)
-			values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-			"message_"+randomHex(12), req.ConversationID, branchID, msg.role, msg.content, nullableString(msg.modelProfileID), nullableString(msg.inferenceRequestID), msg.customerCharge, msg.providerCost, msg.metadata, msg.createdAt)
+			insert into user_messages(id, conversation_id, branch_id, role, content, model_profile_id, inference_request_id, customer_charge, provider_cost, metadata, pinned, created_at)
+			values($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			"message_"+randomHex(12), req.ConversationID, branchID, msg.role, msg.content, nullableString(msg.modelProfileID), nullableString(msg.inferenceRequestID), msg.customerCharge, msg.providerCost, msg.metadata, msg.pinned, msg.createdAt)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
@@ -1789,7 +1790,7 @@ func (a *App) messages(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.DB.QueryContext(r.Context(), `
 		select id, role, content, coalesce(model_profile_id, ''), coalesce(branch_id, ''),
-			coalesce(inference_request_id, ''), customer_charge, provider_cost, metadata, created_at
+			coalesce(inference_request_id, ''), customer_charge, provider_cost, metadata, pinned, created_at
 		from user_messages
 		where conversation_id = $1
 		`+whereBranch+`
@@ -1803,12 +1804,13 @@ func (a *App) messages(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, role, content, modelProfileID, messageBranchID, inferenceRequestID, metadata string
 		var customerCharge, providerCost float64
+		var pinned bool
 		var createdAt time.Time
-		if err := rows.Scan(&id, &role, &content, &modelProfileID, &messageBranchID, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &createdAt); err != nil {
+		if err := rows.Scan(&id, &role, &content, &modelProfileID, &messageBranchID, &inferenceRequestID, &customerCharge, &providerCost, &metadata, &pinned, &createdAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": err.Error()})
 			return
 		}
-		items = append(items, response{"id": id, "role": role, "content": content, "model_profile_id": modelProfileID, "branch_id": messageBranchID, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "created_at": createdAt})
+		items = append(items, response{"id": id, "role": role, "content": content, "model_profile_id": modelProfileID, "branch_id": messageBranchID, "inference_request_id": inferenceRequestID, "customer_charge": customerCharge, "provider_cost": providerCost, "metadata": metadata, "pinned": pinned, "created_at": createdAt})
 	}
 	writeJSON(w, http.StatusOK, response{"messages": items})
 }
@@ -2194,6 +2196,16 @@ func (a *App) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		req.Messages, contextAssetCount, err = a.withExtractedFileContext(r.Context(), projectID, req.ConversationID, req.Messages)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, response{"error": "file_context_load_failed"})
+			return
+		}
+		outputTokenBudget := intParameter(req.Parameters, "max_completion_tokens", intParameter(req.Parameters, "max_tokens", 2048))
+		contextBudget := 12000 - int(outputTokenBudget)
+		if contextBudget < 2000 {
+			contextBudget = 2000
+		}
+		req.Messages, _, err = a.withConversationContext(r.Context(), projectID, req.ConversationID, req.BranchID, req.Messages, contextBudget)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, response{"error": "conversation_context_load_failed"})
 			return
 		}
 	}

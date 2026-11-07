@@ -74,6 +74,7 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	organizationID := strings.TrimSpace(r.URL.Query().Get("organization_id"))
 	requestedUserID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
 	if r.Body != nil && r.Method != http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api/v1/mock-s3/") {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 		if err != nil {
@@ -85,6 +86,7 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 			ProjectID      string `json:"project_id"`
 			OrganizationID string `json:"organization_id"`
 			UserID         string `json:"user_id"`
+			ConversationID string `json:"conversation_id"`
 		}
 		if json.Unmarshal(raw, &body) == nil {
 			if projectID == "" {
@@ -95,6 +97,9 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 			}
 			if requestedUserID == "" {
 				requestedUserID = strings.TrimSpace(body.UserID)
+			}
+			if conversationID == "" {
+				conversationID = strings.TrimSpace(body.ConversationID)
 			}
 		}
 	}
@@ -117,6 +122,10 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 		}
 		return nil
 	}
+	if conversationID != "" {
+		var found int
+		return a.DB.QueryRowContext(r.Context(), `select 1 from user_conversations c join user_projects p on p.id = c.project_id join sys_memberships m on m.organization_id = p.organization_id where c.id = $1 and m.user_id = $2 limit 1`, conversationID, user.ID).Scan(&found)
+	}
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/api/v1/conversations/") {
 		id := strings.TrimPrefix(path, "/api/v1/conversations/")
@@ -131,6 +140,11 @@ func (a *App) authorizeTenantRequest(r *http.Request, user authenticatedUser) er
 		}
 		var found int
 		return a.DB.QueryRowContext(r.Context(), `select 1 from user_workbench_assets a join user_projects p on p.id = a.project_id join sys_memberships m on m.organization_id = p.organization_id where a.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
+	}
+	if strings.HasPrefix(path, "/api/v1/messages/") {
+		id := strings.TrimPrefix(path, "/api/v1/messages/")
+		var found int
+		return a.DB.QueryRowContext(r.Context(), `select 1 from user_messages msg join user_conversations c on c.id = msg.conversation_id join user_projects p on p.id = c.project_id join sys_memberships m on m.organization_id = p.organization_id where msg.id = $1 and m.user_id = $2 limit 1`, id, user.ID).Scan(&found)
 	}
 	if strings.HasPrefix(path, "/api/v1/async-jobs/") {
 		id := strings.TrimPrefix(path, "/api/v1/async-jobs/")

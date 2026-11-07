@@ -433,11 +433,30 @@ CREATE TABLE IF NOT EXISTS user_messages (
   inference_request_id VARCHAR(64),
   customer_charge NUMERIC(24,8) NOT NULL DEFAULT 0,
   provider_cost NUMERIC(24,8) NOT NULL DEFAULT 0,
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
   metadata VARCHAR(4000) NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_messages_conversation FOREIGN KEY (conversation_id) REFERENCES user_conversations(id),
   CONSTRAINT fk_messages_branch FOREIGN KEY (branch_id) REFERENCES user_conversation_branches(id),
   CONSTRAINT fk_messages_profile FOREIGN KEY (model_profile_id) REFERENCES sys_model_profiles(id)
+);
+
+-- User table: compact, refreshable context summaries for long conversations.
+CREATE TABLE IF NOT EXISTS user_conversation_summaries (
+  id VARCHAR(64) PRIMARY KEY,
+  conversation_id VARCHAR(64) NOT NULL,
+  branch_id VARCHAR(64),
+  branch_key VARCHAR(64) NOT NULL DEFAULT '',
+  through_message_id VARCHAR(64),
+  summary TEXT NOT NULL,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_summaries_conversation FOREIGN KEY (conversation_id) REFERENCES user_conversations(id),
+  CONSTRAINT fk_summaries_branch FOREIGN KEY (branch_id) REFERENCES user_conversation_branches(id),
+  CONSTRAINT fk_summaries_message FOREIGN KEY (through_message_id) REFERENCES user_messages(id),
+  CONSTRAINT uq_summaries_conversation_branch UNIQUE (conversation_id, branch_key)
 );
 
 -- User table: uploaded and generated workbench artifacts attached to projects, conversations, and branches.
@@ -900,6 +919,8 @@ CREATE INDEX IF NOT EXISTS idx_sys_channel_routes_model_group ON sys_channel_mod
 CREATE INDEX IF NOT EXISTS idx_sys_channel_routes_channel ON sys_channel_model_routes(channel_id);
 CREATE INDEX IF NOT EXISTS idx_user_messages_conversation ON user_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_messages_inference ON user_messages(inference_request_id);
+CREATE INDEX IF NOT EXISTS idx_messages_context ON user_messages(conversation_id, branch_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_pinned ON user_messages(conversation_id, branch_id, pinned) WHERE pinned = TRUE;
 CREATE INDEX IF NOT EXISTS idx_user_usage_project_created ON user_usage_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_usage_actor_created ON user_usage_events(actor_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_inference_project_created ON user_inference_requests(project_id, created_at);

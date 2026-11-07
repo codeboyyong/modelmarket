@@ -74,6 +74,7 @@ type ConversationMessage = {
   customer_charge: number;
   provider_cost: number;
   metadata: string;
+	pinned: boolean;
   created_at: string;
 };
 
@@ -986,7 +987,26 @@ function renderConversationMessage(message: ConversationMessage) {
   const media = messageAssets.length
     ? `<div class="message-media-grid">${messageAssets.map((asset) => `<figure class="message-media-card">${renderAssetMedia(asset)}<figcaption><strong>Sample ${escapeHTML(asset.asset_type)}</strong>${renderAssetDownload(asset)}</figcaption></figure>`).join("")}</div>`
     : "";
-  return `<div class="message ${role}" data-message-id="${escapeHTML(message.id)}">${renderMessageContent(role, message.content)}${media}</div>`;
+  const pinLabel = message.pinned ? "Unpin from context" : "Pin to context";
+  const pin = `<button class="message-pin${message.pinned ? " active" : ""}" type="button" data-pin-message="${escapeHTML(message.id)}" data-pinned="${message.pinned}" aria-label="${pinLabel}" title="${pinLabel}">${message.pinned ? "Pinned" : "Pin"}</button>`;
+  return `<div class="message ${role}${message.pinned ? " pinned" : ""}" data-message-id="${escapeHTML(message.id)}">${pin}${renderMessageContent(role, message.content)}${media}</div>`;
+}
+
+async function setMessagePinned(messageID: string, pinned: boolean) {
+  if (!messageID) return;
+  await request(`/api/v1/messages/${encodeURIComponent(messageID)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned })
+  });
+  await loadConversationMessages();
+}
+
+async function refreshCurrentConversationSummary() {
+  if (!currentConversationID) return;
+  await request("/api/v1/conversation-summaries/refresh", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: currentConversationID, branch_id: currentBranchID })
+  });
 }
 
 function assetsForMessage(message: ConversationMessage): WorkspaceAsset[] {
@@ -1481,6 +1501,7 @@ async function sendPrompt() {
       ? `\n\nGenerated ${data.artifacts.length} artifact${data.artifacts.length === 1 ? "" : "s"}. Files are saved. See Artifacts to preview or download.`
       : "";
     replaceWaitingMessage(waitingID, `${answer}${artifactNote}`);
+	await refreshCurrentConversationSummary().catch(() => undefined);
     await loadSummary();
     await loadWorkspace();
   } catch (error) {
@@ -2951,6 +2972,12 @@ $("chatTranscript").addEventListener("contextmenu", (event) => {
   openMessageContextMenu(message.dataset.messageId || "", event.clientX, event.clientY);
 });
 $("chatTranscript").addEventListener("click", (event) => {
+	const pinButton = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pin-message]");
+	if (pinButton) {
+		event.preventDefault();
+		setMessagePinned(pinButton.dataset.pinMessage || "", pinButton.dataset.pinned !== "true").catch(showError);
+		return;
+	}
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-download-url]");
   if (!button) return;
   const url = decodeURIComponent(button.dataset.downloadUrl || "");

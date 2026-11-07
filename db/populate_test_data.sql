@@ -15,6 +15,7 @@
 -- DELETE FROM user_file_extractions;
 -- DELETE FROM user_message_attachments;
 -- DELETE FROM user_workbench_assets;
+-- DELETE FROM user_conversation_summaries;
 -- DELETE FROM user_messages;
 -- DELETE FROM user_inference_requests;
 -- DELETE FROM user_conversation_branches;
